@@ -1,17 +1,17 @@
-.workspace-leaf-content .urlautofill-view {
+.workspace-leaf-content .extended-browser-view {
     padding: 0;
     overflow: hidden;
 }
 
-.workspace-leaf-content .urlautofill-view .urlautofill-iframe,
-.workspace-leaf-content .urlautofill-view .urlautofill-webview {
+.workspace-leaf-content .extended-browser-view .extended-browser-iframe,
+.workspace-leaf-content .extended-browser-view .extended-browser-webview {
     width: 100%;
     height: 100%;
     border: none;
     background-color: #fff;
 }
 
-.urlautofill-hidden-form {
+.extended-browser-hidden-form {
     display: none;
 }
 
@@ -21,7 +21,7 @@
     align-items: center;
 }
 
-.urlautofill-mobile-warning {
+.extended-browser-mobile-warning {
     background: #b38c1d;
     padding: 5px 10px;
     border-radius: 5px;
@@ -30,29 +30,29 @@
     color: #fff;
 }
 
-.urlautofill-mobile-link {
+.extended-browser-mobile-link {
     color: #fff;
     text-decoration: underline;
 }
 
-.urlautofill-form-field-column .setting-item-control,
-.urlautofill-form-field-column .setting-item-control textarea,
-.urlautofill-form-field .setting-item-control input[type='text'] {
+.extended-browser-form-field-column .setting-item-control,
+.extended-browser-form-field-column .setting-item-control textarea,
+.extended-browser-form-field .setting-item-control input[type='text'] {
     width: 100%;
 }
 
-.urlautofill-form-field-column .setting-item-control textarea {
+.extended-browser-form-field-column .setting-item-control textarea {
     min-height: 80px;
 }
 
-.urlautofill-form-field-column {
+.extended-browser-form-field-column {
     display: flex;
     flex-direction: column;
     gap: 10px;
     align-items: flex-start;
 }
 
-.urlautofill-quick-list-item {
+.extended-browser-quick-list-item {
     padding: 10px;
     display: flex;
     justify-content: flex-start;
@@ -61,8 +61,8 @@
     cursor: pointer;
 }
 
-.urlautofill-quick-list-item.active,
-.urlautofill-quick-list-item:hover {
+.extended-browser-quick-list-item.active,
+.extended-browser-quick-list-item:hover {
     background: var(--background-modifier-hover);
 }
 
@@ -76,46 +76,46 @@ div[data-gate-id] .setting-item-name {
     text-overflow: ellipsis;
 }
 
-.urlautofill-setting-gate .setting-item-info {
+.extended-browser-setting-gate .setting-item-info {
     width: 100%;
     overflow: hidden;
 }
 
-.urlautofill-setting-gate .setting-item-description {
+.extended-browser-setting-gate .setting-item-description {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.modal.urlautofill-passkey-modal .modal-title {
+.modal.extended-browser-passkey-modal .modal-title {
     border-bottom: 1px solid var(--background-modifier-border);
     padding-bottom: 14px;
     margin-bottom: 18px;
 }
 
-.modal.urlautofill-passkey-modal .modal-content {
+.modal.extended-browser-passkey-modal .modal-content {
     border-top: 0;
 }
 
-.modal.urlautofill-passkey-modal .setting-item {
+.modal.extended-browser-passkey-modal .setting-item {
     border: 0;
     box-shadow: none;
     padding-top: 14px;
     padding-bottom: 14px;
 }
 
-.modal.urlautofill-passkey-modal .setting-item::before,
-.modal.urlautofill-passkey-modal .setting-item::after {
+.modal.extended-browser-passkey-modal .setting-item::before,
+.modal.extended-browser-passkey-modal .setting-item::after {
     display: none;
     content: none;
     border: 0;
 }
 
-.modal.urlautofill-passkey-modal .urlautofill-title-divider {
+.modal.extended-browser-passkey-modal .extended-browser-title-divider {
     display: none;
 }
 
-.urlautofill-advanced-fields-toggle {
+.extended-browser-advanced-fields-toggle {
     width: 100%;
     display: flex;
     justify-content: center;
@@ -129,7 +129,7 @@ div[data-gate-id] .setting-item-name {
     text-align: center;
 }
 
-.urlautofill-advanced-fields-arrow {
+.extended-browser-advanced-fields-arrow {
     display: inline-block;
     width: auto;
     text-align: center;
@@ -139,10 +139,84 @@ div[data-gate-id] .setting-item-name {
     opacity: 0.75;
 }
 
-.urlautofill-advanced-fields-toggle:hover .urlautofill-advanced-fields-arrow {
+.extended-browser-advanced-fields-toggle:hover .extended-browser-advanced-fields-arrow {
     opacity: 1;
 }
 
-.urlautofill-advanced-fields-container {
+.extended-browser-advanced-fields-container {
     margin-top: 4px;
+}
+
+.extended-browser-floating-preview {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    width: 420px;
+    height: 360px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    box-shadow: var(--shadow-s);
+    background: var(--background-primary);
+    overflow: hidden;
+}
+
+.extended-browser-floating-preview.is-hidden {
+    display: none;
+}
+
+.extended-browser-floating-preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    min-height: 36px;
+    flex: none;
+}
+
+.extended-browser-floating-preview-title {
+    font-weight: 600;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.extended-browser-floating-preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: none;
+}
+
+.extended-browser-floating-preview-content {
+    width: 100%;
+    height: 324px;
+    flex: none;
+    overflow: hidden;
+    background-color: #fff;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+}
+
+.extended-browser-floating-preview-content .extended-browser-iframe,
+.extended-browser-floating-preview-content .extended-browser-webview {
+    display: inline-flex !important;
+    width: 418px !important;
+    height: 324px !important;
+    min-width: 418px;
+    min-height: 324px;
+    max-width: 418px;
+    max-height: 324px;
+    border: none;
+    background-color: #fff;
+    flex: none;
 }

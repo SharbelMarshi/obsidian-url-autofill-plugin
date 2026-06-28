@@ -1,5 +1,5 @@
 import WebviewTag = Electron.WebviewTag
-import { clipboard } from 'electron'
+import { clipboard, shell } from 'electron'
 import {
     addIcon,
     Editor,
@@ -15,16 +15,42 @@ import {
 } from 'obsidian'
 import { parse } from 'yaml'
 import { isRecord } from './guards'
+import type { FloatingPreviewManager } from './floating-preview'
 import { GateAutoSignInMethod, GateFrameOption, GateFrameOptionType, GateOpenMode, MarkdownLink } from './types'
+import {
+    clearWebviewSession,
+    getChromeUserAgent,
+    prepareWebviewSession,
+    resolveWebviewUserAgent
+} from './webview-session'
+
+export interface OpenViewContext {
+    floatingPreview?: FloatingPreviewManager
+    gate?: GateFrameOption
+}
 
 const DEFAULT_URL = 'about:blank'
 const GOOGLE_URL = 'https://google.com'
-const URL_AUTOFILL_WEBVIEW_CLASS = 'urlautofill-webview'
+const EXTENDED_BROWSER_WEBVIEW_CLASS = 'extended-browser-webview'
 
 type FrameReadyCallback = () => void
 
+const pendingFrameRestore = new Map<string, WebviewTag | HTMLIFrameElement>()
+
+export function setPendingFrameRestore(gateId: string, frame: WebviewTag | HTMLIFrameElement): void {
+    pendingFrameRestore.set(gateId, frame)
+}
+
+export function consumePendingFrameRestore(gateId: string): WebviewTag | HTMLIFrameElement | null {
+    const frame = pendingFrameRestore.get(gateId)
+    if (frame) {
+        pendingFrameRestore.delete(gateId)
+    }
+    return frame ?? null
+}
+
 function getDefaultUserAgent() {
-    return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+    return getChromeUserAgent()
 }
 
 export const getSvgIcon = (siteUrl: string): string => {
@@ -55,7 +81,7 @@ const submitAutoSignInForm = (iframe: HTMLIFrameElement, params: Partial<GateFra
     form.method = params.autoSignInMethod ?? 'GET'
     form.action = params.loginUrl?.trim() ?? ''
     form.target = iframe.name
-    form.addClass('urlautofill-hidden-form')
+    form.addClass('extended-browser-hidden-form')
 
     const usernameInput = doc.createElement('input')
     usernameInput.type = 'hidden'
@@ -130,7 +156,7 @@ const runIframeJs = (iframe: HTMLIFrameElement, js: string) => {
     try {
         contentWindow.eval(js)
     } catch (error) {
-        console.error('URLAutoFill: failed to run JS in iframe', error)
+        console.error('Extended Browser: failed to run JS in iframe', error)
     }
 }
 
@@ -142,7 +168,7 @@ export const createEmptyGateOption = (): GateFrameOption => {
         hasRibbon: true,
         position: 'right',
         openMode: 'tab',
-        profileKey: 'url-autofill',
+        profileKey: 'extended-browser',
         url: '',
         zoomFactor: 1.0,
         userAgent: getDefaultUserAgent(),
@@ -166,14 +192,14 @@ export const normalizeGateOption = (gate: Partial<GateFrameOption>): GateFrameOp
 
     if (gate.id === '' || gate.id === undefined) {
         let seedString = gate.url
-        if (gate.profileKey != undefined && gate.profileKey !== 'url-autofill' && gate.profileKey !== 'open-gate' && gate.profileKey !== '') {
+        if (gate.profileKey != undefined && gate.profileKey !== 'extended-browser' && gate.profileKey !== 'url-autofill' && gate.profileKey !== 'open-gate' && gate.profileKey !== '') {
             seedString += gate.profileKey
         }
         gate.id = btoa(seedString)
     }
 
     if (gate.profileKey === '' || gate.profileKey === undefined || gate.profileKey === 'open-gate') {
-        gate.profileKey = 'url-autofill'
+        gate.profileKey = 'extended-browser'
     }
 
     if (gate.zoomFactor === 0 || gate.zoomFactor === undefined) {
@@ -217,21 +243,26 @@ export const normalizeGateOption = (gate: Partial<GateFrameOption>): GateFrameOp
     return gate as GateFrameOption
 }
 
-export const createIframe = (params: Partial<GateFrameOption>, onReady?: () => void, parentDoc: Document = activeDocument): HTMLIFrameElement => {
+export const createIframe = (
+    params: Partial<GateFrameOption>,
+    onReady?: () => void,
+    parentDoc: Document = activeDocument
+): HTMLIFrameElement => {
     const iframe = parentDoc.createElement('iframe')
     const shouldAutoSignIn = hasAutoSignInConfig(params)
+    const targetUrl = shouldAutoSignIn ? 'about:blank' : params.url ?? 'about:blank'
 
-    iframe.name = `urlautofill-frame-${Math.random().toString(36).slice(2)}`
+    iframe.name = `extended-browser-frame-${Math.random().toString(36).slice(2)}`
     iframe.setAttribute('allowpopups', '')
 
     if ('credentialless' in iframe) {
         iframe.setAttribute('credentialless', 'true')
     }
 
-    iframe.setAttribute('src', shouldAutoSignIn ? 'about:blank' : params.url ?? 'about:blank')
+    iframe.setAttribute('src', targetUrl)
     iframe.setAttribute('sandbox', 'allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts allow-top-navigation-by-user-activation')
     iframe.setAttribute('allow', 'encrypted-media; fullscreen; oversized-images; picture-in-picture; sync-xhr; geolocation')
-    iframe.addClass('urlautofill-iframe')
+    iframe.addClass('extended-browser-iframe')
 
     let submittedAutoSignIn = false
 
@@ -256,17 +287,87 @@ export const createIframe = (params: Partial<GateFrameOption>, onReady?: () => v
     return iframe
 }
 
-export const createWebviewTag = (params: Partial<GateFrameOption>, onReady?: () => void, parentDoc: Document = activeDocument): WebviewTag => {
+export interface WebviewLayoutOptions {
+    width: number
+    height: number
+    deferSrc?: boolean
+}
+
+const applyWebviewLayout = (webviewTag: WebviewTag, layout: WebviewLayoutOptions): void => {
+    webviewTag.style.display = 'inline-flex'
+    webviewTag.style.width = `${layout.width}px`
+    webviewTag.style.height = `${layout.height}px`
+    webviewTag.style.border = 'none'
+    webviewTag.setAttribute('autosize', 'on')
+    webviewTag.setAttribute('minwidth', '0')
+    webviewTag.setAttribute('minheight', '0')
+}
+
+export const startWebviewNavigation = (webviewTag: WebviewTag, params: Partial<GateFrameOption>): void => {
+    const shouldAutoSignIn = hasAutoSignInConfig(params)
+    const targetUrl = shouldAutoSignIn ? DEFAULT_URL : params.url ?? DEFAULT_URL
+
+    webviewTag.setAttribute('httpreferrer', params.url ?? GOOGLE_URL)
+    webviewTag.setAttribute('src', targetUrl)
+}
+
+export const applyTabFrameLayout = (frameEl: HTMLElement): void => {
+    frameEl.style.display = ''
+    frameEl.style.width = '100%'
+    frameEl.style.height = '100%'
+    frameEl.style.minWidth = ''
+    frameEl.style.minHeight = ''
+    frameEl.style.maxWidth = ''
+    frameEl.style.maxHeight = ''
+    frameEl.style.border = 'none'
+    frameEl.style.flex = ''
+}
+
+export const applyFloatingFrameLayout = (frameEl: HTMLElement, width: number, height: number): void => {
+    frameEl.style.display = 'inline-flex'
+    frameEl.style.width = `${width}px`
+    frameEl.style.height = `${height}px`
+    frameEl.style.minWidth = `${width}px`
+    frameEl.style.minHeight = `${height}px`
+    frameEl.style.maxWidth = `${width}px`
+    frameEl.style.maxHeight = `${height}px`
+    frameEl.style.border = 'none'
+    frameEl.style.flex = 'none'
+}
+
+export const createWebviewTag = (
+    params: Partial<GateFrameOption>,
+    onReady?: () => void,
+    parentDoc: Document = activeDocument,
+    layout?: WebviewLayoutOptions
+): WebviewTag => {
     const webviewTag = parentDoc.createElement('webview') as unknown as WebviewTag
     const shouldAutoSignIn = hasAutoSignInConfig(params)
     let submittedAutoSignIn = false
+    const profileKey = params.profileKey ?? 'extended-browser'
 
-    webviewTag.setAttribute('partition', 'persist:' + params.profileKey)
-    webviewTag.setAttribute('src', shouldAutoSignIn ? DEFAULT_URL : params.url ?? DEFAULT_URL)
-    webviewTag.setAttribute('httpreferrer', params.url ?? GOOGLE_URL)
+    webviewTag.setAttribute('partition', `persist:${profileKey}`)
+    try {
+        prepareWebviewSession(profileKey, params.userAgent)
+    } catch (error) {
+        console.error('Extended Browser: failed to prepare webview session', error)
+    }
+    webviewTag.setAttribute('allowpopups', '')
 
-    webviewTag.addClass(URL_AUTOFILL_WEBVIEW_CLASS)
-    webviewTag.setAttribute('useragent', params.userAgent || getDefaultUserAgent())
+    if (typeof (webviewTag as unknown as { addClass?: (cls: string) => void }).addClass === 'function') {
+        webviewTag.addClass(EXTENDED_BROWSER_WEBVIEW_CLASS)
+    } else {
+        webviewTag.classList.add(EXTENDED_BROWSER_WEBVIEW_CLASS)
+    }
+    webviewTag.setAttribute('useragent', resolveWebviewUserAgent(params.url, params.userAgent))
+
+    if (layout) {
+        applyWebviewLayout(webviewTag, layout)
+    }
+
+    if (!layout?.deferSrc) {
+        startWebviewNavigation(webviewTag, params)
+    }
 
     webviewTag.addEventListener('new-window', (event: Event) => {
         const popupEvent = event as Event & {
@@ -278,7 +379,7 @@ export const createWebviewTag = (params: Partial<GateFrameOption>, onReady?: () 
 
         if (popupEvent.url) {
             void webviewTag.loadURL(popupEvent.url).catch((error) => {
-                console.error('URLAutoFill: failed to open popup URL in webview', error)
+                console.error('Extended Browser: failed to open popup URL in webview', error)
             })
         }
     })
@@ -287,8 +388,8 @@ export const createWebviewTag = (params: Partial<GateFrameOption>, onReady?: () 
         void webviewTag
             .executeJavaScript(`
             (() => {
-                if (window.__urlAutoFillPopupPatchInstalled) return;
-                window.__urlAutoFillPopupPatchInstalled = true;
+                if (window.__extendedBrowserPopupPatchInstalled) return;
+                window.__extendedBrowserPopupPatchInstalled = true;
 
                 const isDocumentUrl = (url) => {
                     if (!url) return false;
@@ -384,7 +485,7 @@ export const createWebviewTag = (params: Partial<GateFrameOption>, onReady?: () 
                 onReady?.()
             })
             .catch((error) => {
-                console.error('URLAutoFill: webview dom-ready handler failed', error)
+                console.error('Extended Browser: webview dom-ready handler failed', error)
             })
     })
 
@@ -395,13 +496,47 @@ export const openView = async (
     workspace: Workspace,
     id: string,
     position?: GateFrameOptionType,
-    openMode: GateOpenMode = 'tab'
-): Promise<WorkspaceLeaf> => {
+    openMode: GateOpenMode = 'tab',
+    context?: OpenViewContext
+): Promise<WorkspaceLeaf | null> => {
+    if (openMode === 'floating') {
+        const gate = context?.gate
+        const floatingPreview = context?.floatingPreview
+
+        if (!gate || !floatingPreview) {
+            throw new Error('Floating preview requires gate options and a floating preview manager')
+        }
+
+        const existingLeaf = workspace.getLeavesOfType(id)[0]
+        if (existingLeaf?.view instanceof GateView) {
+            if (existingLeaf.view.canBorrowFrame()) {
+                await floatingPreview.adoptFromGateViewAndCloseTab(existingLeaf.view)
+                return null
+            }
+
+            existingLeaf.detach()
+        }
+
+        await floatingPreview.show(gate)
+        return null
+    }
+
     const leafs = workspace.getLeavesOfType(id)
 
     if (leafs.length > 0) {
-        workspace.revealLeaf(leafs[0])
-        return leafs[0]
+        const leaf = leafs[0]
+        if (leaf.view instanceof GateView) {
+            if (leaf.view.isFrameBorrowedForFloating()) {
+                leaf.detach()
+            } else {
+                leaf.view.ensureFrame()
+                workspace.revealLeaf(leaf)
+                return leaf
+            }
+        } else {
+            workspace.revealLeaf(leaf)
+            return leaf
+        }
     }
 
     const leaf = await createView(workspace, id, position, openMode)
@@ -447,8 +582,17 @@ const createView = async (
     return leaf
 }
 
-export const unloadView = async (workspace: Workspace, gate: GateFrameOption): Promise<void> => {
+export const unloadView = async (
+    workspace: Workspace,
+    gate: GateFrameOption,
+    context?: OpenViewContext
+): Promise<void> => {
     workspace.detachLeavesOfType(gate.id)
+
+    if (context?.floatingPreview?.getSourceGateId() === gate.id || context?.floatingPreview?.getCurrentGateId() === gate.id) {
+        context.floatingPreview.hide()
+    }
+
     const ribbonIcons = workspace.containerEl.querySelector(`div[aria-label="${gate.title}"]`)
     if (ribbonIcons) {
         ribbonIcons.remove()
@@ -457,11 +601,12 @@ export const unloadView = async (workspace: Workspace, gate: GateFrameOption): P
 
 export class GateView extends ItemView {
     private readonly options: GateFrameOption
-    private frame!: WebviewTag | HTMLIFrameElement
+    private frame?: WebviewTag | HTMLIFrameElement
     private readonly useIframe: boolean = false
     private frameReadyCallbacks: FrameReadyCallback[]
     private isFrameReady: boolean = false
     private frameDoc!: Document
+    private isFrameBorrowed = false
 
     constructor(leaf: WorkspaceLeaf, options: GateFrameOption) {
         super(leaf)
@@ -473,6 +618,11 @@ export class GateView extends ItemView {
 
     addActions(): void {
         this.addAction('refresh-ccw', 'Reload', () => {
+            if (!this.frame) {
+                this.createFrame()
+                return
+            }
+
             if (this.frame instanceof HTMLIFrameElement) {
                 this.frame.contentWindow?.location.reload()
             } else {
@@ -481,18 +631,38 @@ export class GateView extends ItemView {
         })
 
         this.addAction('home', 'Home page', () => {
+            if (!this.frame) {
+                this.createFrame()
+                return
+            }
+
             if (this.frame instanceof HTMLIFrameElement) {
                 this.frame.src = this.options?.url ?? 'about:blank'
             } else {
                 void this.frame.loadURL(this.options?.url ?? 'about:blank').catch((error) => {
-                    console.error('URLAutoFill: failed to load home page', error)
+                    console.error('Extended Browser: failed to load home page', error)
                 })
             }
         })
     }
 
     isWebviewFrame(): boolean {
-        return !(this.frame instanceof HTMLIFrameElement)
+        return Boolean(this.frame) && !(this.frame instanceof HTMLIFrameElement)
+    }
+
+    private markFrameReady(): void {
+        if (!this.isFrameReady) {
+            this.isFrameReady = true
+            this.frameReadyCallbacks.forEach((callback) => callback())
+            this.frameReadyCallbacks = []
+        }
+    }
+
+    private clearEmbeddedFrame(): void {
+        if (this.frame) {
+            this.frame.remove()
+            this.frame = undefined
+        }
     }
 
     onload(): void {
@@ -500,36 +670,81 @@ export class GateView extends ItemView {
         this.addActions()
 
         this.contentEl.empty()
-        this.contentEl.addClass('urlautofill-view')
+        this.contentEl.addClass('extended-browser-view')
 
         window.setTimeout(() => {
-            this.frameDoc = this.contentEl.doc
-            this.createFrame()
+            try {
+                this.ensureFrame()
+            } catch (error) {
+                console.error('Extended Browser: failed to create gate frame', error)
+            }
         }, 0)
     }
 
-    private createFrame(): void {
-        if (this.frame) {
-            this.frame.remove()
+    ensureFrame(): void {
+        this.frameDoc = this.contentEl.doc
+
+        const restoredFrame = consumePendingFrameRestore(this.options.id)
+        if (restoredFrame) {
+            this.attachExternalFrame(restoredFrame)
+            return
         }
 
+        if (this.isFrameBorrowed) {
+            return
+        }
+
+        const frameEl = this.frame as unknown as HTMLElement | undefined
+        if (!frameEl || !this.contentEl.contains(frameEl)) {
+            this.createFrame()
+        }
+    }
+
+    attachExternalFrame(frame: WebviewTag | HTMLIFrameElement): void {
+        this.frame = frame
+        this.isFrameBorrowed = false
+        this.isFrameReady = true
+        this.frameDoc = this.contentEl.doc
+        applyTabFrameLayout(frame as unknown as HTMLElement)
+
+        if (!this.contentEl.contains(frame as unknown as HTMLElement)) {
+            this.contentEl.appendChild(frame as unknown as HTMLElement)
+        }
+
+        if (!this.useIframe && !(frame instanceof HTMLIFrameElement)) {
+            frame.addEventListener('destroyed', () => {
+                window.setTimeout(() => {
+                    if (this.frameDoc !== this.contentEl.doc) {
+                        this.frameDoc = this.contentEl.doc
+                        this.createFrame()
+                    }
+                }, 0)
+            })
+        }
+    }
+
+    private createFrame(): void {
+        if (this.isFrameBorrowed) {
+            return
+        }
+
+        this.clearEmbeddedFrame()
         this.isFrameReady = false
 
         const onReady = () => {
-            if (!this.isFrameReady) {
-                this.isFrameReady = true
-                this.frameReadyCallbacks.forEach((callback) => callback())
-            }
+            this.markFrameReady()
         }
 
         this.frameDoc = this.contentEl.doc
 
         if (this.useIframe) {
-            this.frame = createIframe(this.options, onReady, this.frameDoc)
+            const iframe = createIframe(this.options, onReady, this.frameDoc)
+            this.frame = iframe
         } else {
-            this.frame = createWebviewTag(this.options, onReady, this.frameDoc)
+            const webview = createWebviewTag(this.options, onReady, this.frameDoc)
+            this.frame = webview
 
-            this.frame.addEventListener('destroyed', () => {
+            webview.addEventListener('destroyed', () => {
                 window.setTimeout(() => {
                     if (this.frameDoc !== this.contentEl.doc) {
                         this.frameDoc = this.contentEl.doc
@@ -539,14 +754,43 @@ export class GateView extends ItemView {
             })
         }
 
-        this.contentEl.appendChild(this.frame as unknown as HTMLElement)
+        if (this.frame) {
+            this.contentEl.appendChild(this.frame as unknown as HTMLElement)
+        }
     }
 
     onunload(): void {
-        if (this.frame) {
+        if (this.frame && !this.isFrameBorrowed) {
             this.frame.remove()
         }
         super.onunload()
+    }
+
+    canBorrowFrame(): boolean {
+        return Boolean(this.frame) && !this.isFrameBorrowed
+    }
+
+    isFrameBorrowedForFloating(): boolean {
+        return this.isFrameBorrowed
+    }
+
+    borrowFrame(): WebviewTag | HTMLIFrameElement | null {
+        if (!this.canBorrowFrame()) {
+            return null
+        }
+
+        this.isFrameBorrowed = true
+        return this.frame ?? null
+    }
+
+    returnBorrowedFrame(): void {
+        if (!this.frame || !this.isFrameBorrowed) {
+            return
+        }
+
+        this.isFrameBorrowed = false
+        applyTabFrameLayout(this.frame as unknown as HTMLElement)
+        this.contentEl.appendChild(this.frame as unknown as HTMLElement)
     }
 
     onPaneMenu(menu: Menu, source: string): void {
@@ -555,6 +799,11 @@ export class GateView extends ItemView {
             item.setTitle('Reload')
             item.setIcon('refresh-ccw')
             item.onClick(() => {
+                if (!this.frame) {
+                    this.createFrame()
+                    return
+                }
+
                 if (this.frame instanceof HTMLIFrameElement) {
                     this.frame.contentWindow?.location.reload()
                 } else {
@@ -566,11 +815,16 @@ export class GateView extends ItemView {
             item.setTitle('Home page')
             item.setIcon('home')
             item.onClick(() => {
+                if (!this.frame) {
+                    this.createFrame()
+                    return
+                }
+
                 if (this.frame instanceof HTMLIFrameElement) {
                     this.frame.src = this.options?.url ?? 'about:blank'
                 } else {
                     void this.frame.loadURL(this.options?.url ?? 'about:blank').catch((error) => {
-                        console.error('URLAutoFill: failed to load home page', error)
+                        console.error('Extended Browser: failed to load home page', error)
                     })
                 }
             })
@@ -579,7 +833,7 @@ export class GateView extends ItemView {
             item.setTitle('Toggle DevTools')
             item.setIcon('file-cog')
             item.onClick(() => {
-                if (this.frame instanceof HTMLIFrameElement) {
+                if (!this.frame || this.frame instanceof HTMLIFrameElement) {
                     return
                 }
 
@@ -595,6 +849,11 @@ export class GateView extends ItemView {
             item.setTitle('Copy Page URL')
             item.setIcon('clipboard-copy')
             item.onClick(() => {
+                if (!this.frame) {
+                    clipboard.writeText(this.options.url)
+                    return
+                }
+
                 if (this.frame instanceof HTMLIFrameElement) {
                     clipboard.writeText(this.frame.src)
                     return
@@ -605,15 +864,32 @@ export class GateView extends ItemView {
         })
 
         menu.addItem((item) => {
+            item.setTitle('Clear site session')
+            item.setIcon('eraser')
+            item.onClick(() => {
+                void clearWebviewSession(this.options.profileKey ?? 'extended-browser').then(() => {
+                    new Notice('Site session cleared. Reload the page to sign in again.')
+                })
+            })
+        })
+
+        menu.addItem((item) => {
             item.setTitle('Open in browser')
             item.setIcon('globe')
             item.onClick(() => {
-                if (this.frame instanceof HTMLIFrameElement) {
-                    window.open(this.frame.src)
+                const url = this.getCurrentUrl()
+
+                if (!this.frame) {
+                    void shell.openExternal(url)
                     return
                 }
 
-                window.open(this.frame.getURL())
+                if (this.frame instanceof HTMLIFrameElement) {
+                    void shell.openExternal(this.frame.src)
+                    return
+                }
+
+                void shell.openExternal(this.frame.getURL())
             })
         })
     }
@@ -642,7 +918,34 @@ export class GateView extends ItemView {
         }
     }
 
+    getCurrentUrl(): string {
+        if (!this.frame) {
+            return this.options.url
+        }
+
+        if (this.frame instanceof HTMLIFrameElement) {
+            return this.frame.src || this.options.url
+        }
+
+        try {
+            return this.frame.getURL() || this.options.url
+        } catch {
+            return this.options.url
+        }
+    }
+
+    getSnapshot(): GateFrameOption {
+        return { ...this.options, url: this.getCurrentUrl() }
+    }
+
     async setUrl(url: string) {
+        this.options.url = url
+
+        if (!this.frame) {
+            this.createFrame()
+            return
+        }
+
         if (this.frame instanceof HTMLIFrameElement) {
             this.frame.src = url
         } else {
@@ -652,6 +955,18 @@ export class GateView extends ItemView {
 
             await this.frame.loadURL(url)
         }
+    }
+}
+
+const getOpenViewContext = (plugin: Plugin, gate: GateFrameOption): OpenViewContext | undefined => {
+    const autofillPlugin = plugin as Plugin & { floatingPreview?: FloatingPreviewManager }
+    if (!autofillPlugin.floatingPreview) {
+        return { gate }
+    }
+
+    return {
+        floatingPreview: autofillPlugin.floatingPreview,
+        gate
     }
 }
 
@@ -667,22 +982,26 @@ export const registerGate = (plugin: Plugin, options: GateFrameOption) => {
         iconName = options.id
     }
 
-    if (options.hasRibbon) {
-        plugin.addRibbonIcon(iconName, options.title, () => {
-            void openView(plugin.app.workspace, options.id, options.position, options.openMode ?? 'tab').catch((error) => {
-                console.error('URLAutoFill: failed to open view from ribbon', error)
-            })
+    const openGate = () => {
+        void openView(
+            plugin.app.workspace,
+            options.id,
+            options.position,
+            options.openMode ?? 'tab',
+            getOpenViewContext(plugin, options)
+        ).catch((error) => {
+            console.error('Extended Browser: failed to open view', error)
         })
     }
 
+    if (options.hasRibbon) {
+        plugin.addRibbonIcon(iconName, options.title, openGate)
+    }
+
     plugin.addCommand({
-        id: `url-autofill-${btoa(options.url)}`,
+        id: `extended-browser-${btoa(options.url)}`,
         name: `Open ${options.title}`,
-        callback: () => {
-            void openView(plugin.app.workspace, options.id, options.position, options.openMode ?? 'tab').catch((error) => {
-                console.error('URLAutoFill: failed to open view from command', error)
-            })
-        }
+        callback: openGate
     })
 }
 
@@ -694,7 +1013,7 @@ export const createFormEditGate = (
 ) => {
     new Setting(contentEl)
         .setName('URL')
-        .setClass('urlautofill-form-field')
+        .setClass('extended-browser-form-field')
         .addText((text) =>
             text
                 .setPlaceholder('https://example.com')
@@ -707,7 +1026,7 @@ export const createFormEditGate = (
 
     new Setting(contentEl)
         .setName('Name')
-        .setClass('urlautofill-form-field')
+        .setClass('extended-browser-form-field')
         .addText((text) =>
             text.setValue(gateOptions.title).onChange((value) => {
                 gateOptions.title = value
@@ -716,7 +1035,7 @@ export const createFormEditGate = (
 
     new Setting(contentEl)
         .setName('Pin to menu')
-        .setClass('urlautofill-form-field')
+        .setClass('extended-browser-form-field')
         .setDesc('If enabled, the gate will be pinned to the left bar')
         .addToggle((text) =>
             text.setValue(gateOptions.hasRibbon === true).onChange((value) => {
@@ -725,8 +1044,8 @@ export const createFormEditGate = (
         )
     new Setting(contentEl)
         .setName('Automatic sign-in')
-        .setClass('urlautofill-form-field')
-        .setDesc('If enabled, URLAutoFill will submit the username and password when the page opens.')
+        .setClass('extended-browser-form-field')
+        .setDesc('If enabled, Extended Browser will submit the username and password when the page opens.')
         .addToggle((toggle) =>
             toggle.setValue(gateOptions.autoSignIn === true).onChange((value) => {
                 gateOptions.autoSignIn = value
@@ -734,7 +1053,7 @@ export const createFormEditGate = (
         )
     new Setting(contentEl)
         .setName('Sign-in method')
-        .setClass('urlautofill-form-field')
+        .setClass('extended-browser-form-field')
         .setDesc('Use GET if the website rejects POST with a 405 error.')
         .addDropdown((dropdown) =>
             dropdown
@@ -748,20 +1067,21 @@ export const createFormEditGate = (
 
     new Setting(contentEl)
         .setName('Open mode')
-        .setClass('urlautofill-form-field')
+        .setClass('extended-browser-form-field')
         .setDesc('Choose whether the website opens in a tab or in a separate window.')
         .addDropdown((dropdown) =>
             dropdown
                 .addOption('tab', 'Tab')
                 .addOption('window', 'Window')
+                .addOption('floating', 'Floating preview')
                 .setValue(gateOptions.openMode ?? 'tab')
                 .onChange((value) => {
-                    gateOptions.openMode = value as 'tab' | 'window'
+                    gateOptions.openMode = value as GateOpenMode
                 })
         )
     new Setting(contentEl)
         .setName('Username')
-        .setClass('urlautofill-form-field')
+        .setClass('extended-browser-form-field')
         .addText((text) =>
             text
                 .setPlaceholder('username or email')
@@ -773,7 +1093,7 @@ export const createFormEditGate = (
 
     new Setting(contentEl)
         .setName('Password')
-        .setClass('urlautofill-form-field')
+        .setClass('extended-browser-form-field')
         .addText((text) => {
             text.inputEl.type = 'password'
             text
@@ -785,16 +1105,16 @@ export const createFormEditGate = (
         })
 
     const advancedFieldsToggle = contentEl.createDiv({
-        cls: 'urlautofill-advanced-fields-toggle'
+        cls: 'extended-browser-advanced-fields-toggle'
     })
 
     const advancedArrow = advancedFieldsToggle.createSpan({
-        cls: 'urlautofill-advanced-fields-arrow',
+        cls: 'extended-browser-advanced-fields-arrow',
         text: '⌄'
     })
 
     const advancedFieldsContainer = contentEl.createDiv({
-        cls: 'urlautofill-advanced-fields-container'
+        cls: 'extended-browser-advanced-fields-container'
     })
 
     advancedFieldsContainer.hide()
@@ -817,7 +1137,7 @@ export const createFormEditGate = (
 
     new Setting(advancedFieldsContainer)
         .setName('Username field name')
-        .setClass('urlautofill-form-field')
+        .setClass('extended-browser-form-field')
         .setDesc('Usually username, email, user, or login.')
         .addText((text) =>
             text
@@ -830,7 +1150,7 @@ export const createFormEditGate = (
 
     new Setting(advancedFieldsContainer)
         .setName('Password field name')
-        .setClass('urlautofill-form-field')
+        .setClass('extended-browser-form-field')
         .setDesc('Usually password.')
         .addText((text) =>
             text
@@ -935,15 +1255,21 @@ function createErrorMessage(error?: Error, ownerDoc: Document = activeDocument):
     return div
 }
 
-function createFrame(options: GateFrameOption, height: string, ownerDoc: Document = activeDocument): HTMLIFrameElement | WebviewTag {
-    const frame = Platform.isMobileApp ? createIframe(options, undefined, ownerDoc) : createWebviewTag(options, undefined, ownerDoc)
+function createFrame(options: GateFrameOption, height: string, ownerDoc: Document = activeDocument): HTMLElement {
+    if (Platform.isMobileApp) {
+        const frame = createIframe(options, undefined, ownerDoc)
+        frame.setCssProps({ height })
+        return frame as unknown as HTMLElement
+    }
+
+    const frame = createWebviewTag(options, undefined, ownerDoc)
     frame.setCssProps({ height })
-    return frame
+    return frame as unknown as HTMLElement
 }
 
 export function registerCodeBlockProcessor(plugin: CodeBlockProcessorPlugin) {
     plugin.registerMarkdownCodeBlockProcessor('gate', (sourceCode, el, _ctx) => {
-        el.addClass('urlautofill-view')
+        el.addClass('extended-browser-view')
         const frame = processNewSyntax(plugin, sourceCode, el.ownerDocument)
         el.appendChild(frame)
     })
@@ -978,7 +1304,11 @@ const createLinkConvertMenu = (menu: Menu, editor: Editor) => {
     const parsedLink = parseLink(selection)
     if (!parsedLink) return
 
-    if (parsedLink.url.startsWith('obsidian://urlautofill') || parsedLink.url.startsWith('obsidian://opengate')) {
+    if (
+        parsedLink.url.startsWith('obsidian://extended-browser') ||
+        parsedLink.url.startsWith('obsidian://urlautofill') ||
+        parsedLink.url.startsWith('obsidian://opengate')
+    ) {
         menu.addItem((item) => {
             item.setTitle('Convert to normal link').onClick(() => {
                 const urlMatch = parsedLink.url.match(/url=([^&]+)/)
@@ -995,7 +1325,7 @@ const createLinkConvertMenu = (menu: Menu, editor: Editor) => {
     } else {
         menu.addItem((item) => {
             item.setTitle('Convert to Gate Link').onClick(() => {
-                const gateLink = `[${parsedLink.title}](obsidian://urlautofill?title=${encodeURIComponent(parsedLink.title)}&url=${encodeURIComponent(parsedLink.url)})`
+                const gateLink = `[${parsedLink.title}](obsidian://extended-browser?title=${encodeURIComponent(parsedLink.title)}&url=${encodeURIComponent(parsedLink.url)})`
                 editor.replaceSelection(gateLink)
             })
         })

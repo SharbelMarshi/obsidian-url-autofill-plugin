@@ -24,13 +24,16 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
-  default: () => URLAutoFillPlugin
+  default: () => ExtendedBrowserPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
+
+// src/floating-preview.ts
+var import_obsidian2 = require("obsidian");
 
 // src/functions.ts
-var import_electron = require("electron");
+var import_electron2 = require("electron");
 var import_obsidian = require("obsidian");
 
 // node_modules/yaml/browser/dist/nodes/identity.js
@@ -6100,12 +6103,63 @@ function isString(value) {
   return typeof value === "string";
 }
 
+// src/webview-session.ts
+var import_electron = require("electron");
+var configuredPartitions = /* @__PURE__ */ new Set();
+function getPlatformSegment() {
+  switch (process.platform) {
+    case "darwin":
+      return "Macintosh; Intel Mac OS X 10_15_7";
+    case "win32":
+      return "Windows NT 10.0; Win64; x64";
+    default:
+      return "X11; Linux x86_64";
+  }
+}
+function getChromeUserAgent() {
+  var _a;
+  const chromeVersion = (_a = process.versions.chrome) != null ? _a : "131.0.0.0";
+  return `Mozilla/5.0 (${getPlatformSegment()}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
+}
+function resolveWebviewUserAgent(siteUrl, customUserAgent) {
+  if (customUserAgent == null ? void 0 : customUserAgent.trim()) {
+    return customUserAgent.trim();
+  }
+  return getChromeUserAgent();
+}
+function prepareWebviewSession(profileKey, customUserAgent) {
+  const partition = `persist:${profileKey}`;
+  const resolvedUserAgent = resolveWebviewUserAgent(void 0, customUserAgent);
+  const webviewSession = import_electron.session.fromPartition(partition);
+  webviewSession.setUserAgent(resolvedUserAgent);
+  if (configuredPartitions.has(partition)) {
+    return;
+  }
+  configuredPartitions.add(partition);
+}
+async function clearWebviewSession(profileKey) {
+  const partition = `persist:${profileKey}`;
+  await import_electron.session.fromPartition(partition).clearStorageData();
+  configuredPartitions.delete(partition);
+}
+
 // src/functions.ts
 var DEFAULT_URL = "about:blank";
 var GOOGLE_URL = "https://google.com";
-var URL_AUTOFILL_WEBVIEW_CLASS = "urlautofill-webview";
+var EXTENDED_BROWSER_WEBVIEW_CLASS = "extended-browser-webview";
+var pendingFrameRestore = /* @__PURE__ */ new Map();
+function setPendingFrameRestore(gateId, frame) {
+  pendingFrameRestore.set(gateId, frame);
+}
+function consumePendingFrameRestore(gateId) {
+  const frame = pendingFrameRestore.get(gateId);
+  if (frame) {
+    pendingFrameRestore.delete(gateId);
+  }
+  return frame != null ? frame : null;
+}
 function getDefaultUserAgent() {
-  return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  return getChromeUserAgent();
 }
 var getSvgIcon = (siteUrl) => {
   const domain = new URL(siteUrl).hostname;
@@ -6122,7 +6176,7 @@ var submitAutoSignInForm = (iframe, params) => {
   form.method = (_a = params.autoSignInMethod) != null ? _a : "GET";
   form.action = (_c = (_b = params.loginUrl) == null ? void 0 : _b.trim()) != null ? _c : "";
   form.target = iframe.name;
-  form.addClass("urlautofill-hidden-form");
+  form.addClass("extended-browser-hidden-form");
   const usernameInput = doc.createElement("input");
   usernameInput.type = "hidden";
   usernameInput.name = (_e = (_d = params.usernameField) == null ? void 0 : _d.trim()) != null ? _e : "username";
@@ -6189,7 +6243,7 @@ var runIframeJs = (iframe, js) => {
   try {
     contentWindow.eval(js);
   } catch (error) {
-    console.error("URLAutoFill: failed to run JS in iframe", error);
+    console.error("Extended Browser: failed to run JS in iframe", error);
   }
 };
 var createEmptyGateOption = () => {
@@ -6200,7 +6254,7 @@ var createEmptyGateOption = () => {
     hasRibbon: true,
     position: "right",
     openMode: "tab",
-    profileKey: "url-autofill",
+    profileKey: "extended-browser",
     url: "",
     zoomFactor: 1,
     userAgent: getDefaultUserAgent(),
@@ -6223,13 +6277,13 @@ var normalizeGateOption = (gate) => {
   }
   if (gate.id === "" || gate.id === void 0) {
     let seedString = gate.url;
-    if (gate.profileKey != void 0 && gate.profileKey !== "url-autofill" && gate.profileKey !== "open-gate" && gate.profileKey !== "") {
+    if (gate.profileKey != void 0 && gate.profileKey !== "extended-browser" && gate.profileKey !== "url-autofill" && gate.profileKey !== "open-gate" && gate.profileKey !== "") {
       seedString += gate.profileKey;
     }
     gate.id = btoa(seedString);
   }
   if (gate.profileKey === "" || gate.profileKey === void 0 || gate.profileKey === "open-gate") {
-    gate.profileKey = "url-autofill";
+    gate.profileKey = "extended-browser";
   }
   if (gate.zoomFactor === 0 || gate.zoomFactor === void 0) {
     gate.zoomFactor = 1;
@@ -6267,15 +6321,16 @@ var createIframe = (params, onReady, parentDoc = activeDocument) => {
   var _a;
   const iframe = parentDoc.createElement("iframe");
   const shouldAutoSignIn = hasAutoSignInConfig(params);
-  iframe.name = `urlautofill-frame-${Math.random().toString(36).slice(2)}`;
+  const targetUrl = shouldAutoSignIn ? "about:blank" : (_a = params.url) != null ? _a : "about:blank";
+  iframe.name = `extended-browser-frame-${Math.random().toString(36).slice(2)}`;
   iframe.setAttribute("allowpopups", "");
   if ("credentialless" in iframe) {
     iframe.setAttribute("credentialless", "true");
   }
-  iframe.setAttribute("src", shouldAutoSignIn ? "about:blank" : (_a = params.url) != null ? _a : "about:blank");
+  iframe.setAttribute("src", targetUrl);
   iframe.setAttribute("sandbox", "allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts allow-top-navigation-by-user-activation");
   iframe.setAttribute("allow", "encrypted-media; fullscreen; oversized-images; picture-in-picture; sync-xhr; geolocation");
-  iframe.addClass("urlautofill-iframe");
+  iframe.addClass("extended-browser-iframe");
   let submittedAutoSignIn = false;
   iframe.addEventListener("load", () => {
     if (shouldAutoSignIn && !submittedAutoSignIn) {
@@ -6293,30 +6348,83 @@ var createIframe = (params, onReady, parentDoc = activeDocument) => {
   });
   return iframe;
 };
-var createWebviewTag = (params, onReady, parentDoc = activeDocument) => {
+var applyWebviewLayout = (webviewTag, layout) => {
+  webviewTag.style.display = "inline-flex";
+  webviewTag.style.width = `${layout.width}px`;
+  webviewTag.style.height = `${layout.height}px`;
+  webviewTag.style.border = "none";
+  webviewTag.setAttribute("autosize", "on");
+  webviewTag.setAttribute("minwidth", "0");
+  webviewTag.setAttribute("minheight", "0");
+};
+var startWebviewNavigation = (webviewTag, params) => {
   var _a, _b;
+  const shouldAutoSignIn = hasAutoSignInConfig(params);
+  const targetUrl = shouldAutoSignIn ? DEFAULT_URL : (_a = params.url) != null ? _a : DEFAULT_URL;
+  webviewTag.setAttribute("httpreferrer", (_b = params.url) != null ? _b : GOOGLE_URL);
+  webviewTag.setAttribute("src", targetUrl);
+};
+var applyTabFrameLayout = (frameEl) => {
+  frameEl.style.display = "";
+  frameEl.style.width = "100%";
+  frameEl.style.height = "100%";
+  frameEl.style.minWidth = "";
+  frameEl.style.minHeight = "";
+  frameEl.style.maxWidth = "";
+  frameEl.style.maxHeight = "";
+  frameEl.style.border = "none";
+  frameEl.style.flex = "";
+};
+var applyFloatingFrameLayout = (frameEl, width, height) => {
+  frameEl.style.display = "inline-flex";
+  frameEl.style.width = `${width}px`;
+  frameEl.style.height = `${height}px`;
+  frameEl.style.minWidth = `${width}px`;
+  frameEl.style.minHeight = `${height}px`;
+  frameEl.style.maxWidth = `${width}px`;
+  frameEl.style.maxHeight = `${height}px`;
+  frameEl.style.border = "none";
+  frameEl.style.flex = "none";
+};
+var createWebviewTag = (params, onReady, parentDoc = activeDocument, layout) => {
+  var _a;
   const webviewTag = parentDoc.createElement("webview");
   const shouldAutoSignIn = hasAutoSignInConfig(params);
   let submittedAutoSignIn = false;
-  webviewTag.setAttribute("partition", "persist:" + params.profileKey);
-  webviewTag.setAttribute("src", shouldAutoSignIn ? DEFAULT_URL : (_a = params.url) != null ? _a : DEFAULT_URL);
-  webviewTag.setAttribute("httpreferrer", (_b = params.url) != null ? _b : GOOGLE_URL);
-  webviewTag.addClass(URL_AUTOFILL_WEBVIEW_CLASS);
-  webviewTag.setAttribute("useragent", params.userAgent || getDefaultUserAgent());
+  const profileKey = (_a = params.profileKey) != null ? _a : "extended-browser";
+  webviewTag.setAttribute("partition", `persist:${profileKey}`);
+  try {
+    prepareWebviewSession(profileKey, params.userAgent);
+  } catch (error) {
+    console.error("Extended Browser: failed to prepare webview session", error);
+  }
+  webviewTag.setAttribute("allowpopups", "");
+  if (typeof webviewTag.addClass === "function") {
+    webviewTag.addClass(EXTENDED_BROWSER_WEBVIEW_CLASS);
+  } else {
+    webviewTag.classList.add(EXTENDED_BROWSER_WEBVIEW_CLASS);
+  }
+  webviewTag.setAttribute("useragent", resolveWebviewUserAgent(params.url, params.userAgent));
+  if (layout) {
+    applyWebviewLayout(webviewTag, layout);
+  }
+  if (!(layout == null ? void 0 : layout.deferSrc)) {
+    startWebviewNavigation(webviewTag, params);
+  }
   webviewTag.addEventListener("new-window", (event) => {
     const popupEvent = event;
     popupEvent.preventDefault();
     if (popupEvent.url) {
       void webviewTag.loadURL(popupEvent.url).catch((error) => {
-        console.error("URLAutoFill: failed to open popup URL in webview", error);
+        console.error("Extended Browser: failed to open popup URL in webview", error);
       });
     }
   });
   webviewTag.addEventListener("dom-ready", () => {
     void webviewTag.executeJavaScript(`
             (() => {
-                if (window.__urlAutoFillPopupPatchInstalled) return;
-                window.__urlAutoFillPopupPatchInstalled = true;
+                if (window.__extendedBrowserPopupPatchInstalled) return;
+                window.__extendedBrowserPopupPatchInstalled = true;
 
                 const isDocumentUrl = (url) => {
                     if (!url) return false;
@@ -6406,16 +6514,44 @@ var createWebviewTag = (params, onReady, parentDoc = activeDocument) => {
       }
       onReady == null ? void 0 : onReady();
     }).catch((error) => {
-      console.error("URLAutoFill: webview dom-ready handler failed", error);
+      console.error("Extended Browser: webview dom-ready handler failed", error);
     });
   });
   return webviewTag;
 };
-var openView = async (workspace, id, position, openMode = "tab") => {
+var openView = async (workspace, id, position, openMode = "tab", context) => {
+  if (openMode === "floating") {
+    const gate = context == null ? void 0 : context.gate;
+    const floatingPreview = context == null ? void 0 : context.floatingPreview;
+    if (!gate || !floatingPreview) {
+      throw new Error("Floating preview requires gate options and a floating preview manager");
+    }
+    const existingLeaf = workspace.getLeavesOfType(id)[0];
+    if ((existingLeaf == null ? void 0 : existingLeaf.view) instanceof GateView) {
+      if (existingLeaf.view.canBorrowFrame()) {
+        await floatingPreview.adoptFromGateViewAndCloseTab(existingLeaf.view);
+        return null;
+      }
+      existingLeaf.detach();
+    }
+    await floatingPreview.show(gate);
+    return null;
+  }
   const leafs = workspace.getLeavesOfType(id);
   if (leafs.length > 0) {
-    workspace.revealLeaf(leafs[0]);
-    return leafs[0];
+    const leaf2 = leafs[0];
+    if (leaf2.view instanceof GateView) {
+      if (leaf2.view.isFrameBorrowedForFloating()) {
+        leaf2.detach();
+      } else {
+        leaf2.view.ensureFrame();
+        workspace.revealLeaf(leaf2);
+        return leaf2;
+      }
+    } else {
+      workspace.revealLeaf(leaf2);
+      return leaf2;
+    }
   }
   const leaf = await createView(workspace, id, position, openMode);
   workspace.revealLeaf(leaf);
@@ -6445,8 +6581,12 @@ var createView = async (workspace, id, position, openMode = "tab") => {
   await leaf.setViewState({ type: id, active: true });
   return leaf;
 };
-var unloadView = async (workspace, gate) => {
+var unloadView = async (workspace, gate, context) => {
+  var _a, _b;
   workspace.detachLeavesOfType(gate.id);
+  if (((_a = context == null ? void 0 : context.floatingPreview) == null ? void 0 : _a.getSourceGateId()) === gate.id || ((_b = context == null ? void 0 : context.floatingPreview) == null ? void 0 : _b.getCurrentGateId()) === gate.id) {
+    context.floatingPreview.hide();
+  }
   const ribbonIcons = workspace.containerEl.querySelector(`div[aria-label="${gate.title}"]`);
   if (ribbonIcons) {
     ribbonIcons.remove();
@@ -6457,6 +6597,7 @@ var GateView = class extends import_obsidian.ItemView {
     super(leaf);
     this.useIframe = false;
     this.isFrameReady = false;
+    this.isFrameBorrowed = false;
     this.navigation = false;
     this.options = options;
     this.useIframe = import_obsidian.Platform.isMobileApp;
@@ -6465,6 +6606,10 @@ var GateView = class extends import_obsidian.ItemView {
   addActions() {
     this.addAction("refresh-ccw", "Reload", () => {
       var _a;
+      if (!this.frame) {
+        this.createFrame();
+        return;
+      }
       if (this.frame instanceof HTMLIFrameElement) {
         (_a = this.frame.contentWindow) == null ? void 0 : _a.location.reload();
       } else {
@@ -6473,45 +6618,74 @@ var GateView = class extends import_obsidian.ItemView {
     });
     this.addAction("home", "Home page", () => {
       var _a, _b, _c, _d;
+      if (!this.frame) {
+        this.createFrame();
+        return;
+      }
       if (this.frame instanceof HTMLIFrameElement) {
         this.frame.src = (_b = (_a = this.options) == null ? void 0 : _a.url) != null ? _b : "about:blank";
       } else {
         void this.frame.loadURL((_d = (_c = this.options) == null ? void 0 : _c.url) != null ? _d : "about:blank").catch((error) => {
-          console.error("URLAutoFill: failed to load home page", error);
+          console.error("Extended Browser: failed to load home page", error);
         });
       }
     });
   }
   isWebviewFrame() {
-    return !(this.frame instanceof HTMLIFrameElement);
+    return Boolean(this.frame) && !(this.frame instanceof HTMLIFrameElement);
+  }
+  markFrameReady() {
+    if (!this.isFrameReady) {
+      this.isFrameReady = true;
+      this.frameReadyCallbacks.forEach((callback) => callback());
+      this.frameReadyCallbacks = [];
+    }
+  }
+  clearEmbeddedFrame() {
+    if (this.frame) {
+      this.frame.remove();
+      this.frame = void 0;
+    }
   }
   onload() {
     super.onload();
     this.addActions();
     this.contentEl.empty();
-    this.contentEl.addClass("urlautofill-view");
+    this.contentEl.addClass("extended-browser-view");
     window.setTimeout(() => {
-      this.frameDoc = this.contentEl.doc;
-      this.createFrame();
+      try {
+        this.ensureFrame();
+      } catch (error) {
+        console.error("Extended Browser: failed to create gate frame", error);
+      }
     }, 0);
   }
-  createFrame() {
-    if (this.frame) {
-      this.frame.remove();
-    }
-    this.isFrameReady = false;
-    const onReady = () => {
-      if (!this.isFrameReady) {
-        this.isFrameReady = true;
-        this.frameReadyCallbacks.forEach((callback) => callback());
-      }
-    };
+  ensureFrame() {
     this.frameDoc = this.contentEl.doc;
-    if (this.useIframe) {
-      this.frame = createIframe(this.options, onReady, this.frameDoc);
-    } else {
-      this.frame = createWebviewTag(this.options, onReady, this.frameDoc);
-      this.frame.addEventListener("destroyed", () => {
+    const restoredFrame = consumePendingFrameRestore(this.options.id);
+    if (restoredFrame) {
+      this.attachExternalFrame(restoredFrame);
+      return;
+    }
+    if (this.isFrameBorrowed) {
+      return;
+    }
+    const frameEl = this.frame;
+    if (!frameEl || !this.contentEl.contains(frameEl)) {
+      this.createFrame();
+    }
+  }
+  attachExternalFrame(frame) {
+    this.frame = frame;
+    this.isFrameBorrowed = false;
+    this.isFrameReady = true;
+    this.frameDoc = this.contentEl.doc;
+    applyTabFrameLayout(frame);
+    if (!this.contentEl.contains(frame)) {
+      this.contentEl.appendChild(frame);
+    }
+    if (!this.useIframe && !(frame instanceof HTMLIFrameElement)) {
+      frame.addEventListener("destroyed", () => {
         window.setTimeout(() => {
           if (this.frameDoc !== this.contentEl.doc) {
             this.frameDoc = this.contentEl.doc;
@@ -6520,13 +6694,63 @@ var GateView = class extends import_obsidian.ItemView {
         }, 0);
       });
     }
-    this.contentEl.appendChild(this.frame);
+  }
+  createFrame() {
+    if (this.isFrameBorrowed) {
+      return;
+    }
+    this.clearEmbeddedFrame();
+    this.isFrameReady = false;
+    const onReady = () => {
+      this.markFrameReady();
+    };
+    this.frameDoc = this.contentEl.doc;
+    if (this.useIframe) {
+      const iframe = createIframe(this.options, onReady, this.frameDoc);
+      this.frame = iframe;
+    } else {
+      const webview = createWebviewTag(this.options, onReady, this.frameDoc);
+      this.frame = webview;
+      webview.addEventListener("destroyed", () => {
+        window.setTimeout(() => {
+          if (this.frameDoc !== this.contentEl.doc) {
+            this.frameDoc = this.contentEl.doc;
+            this.createFrame();
+          }
+        }, 0);
+      });
+    }
+    if (this.frame) {
+      this.contentEl.appendChild(this.frame);
+    }
   }
   onunload() {
-    if (this.frame) {
+    if (this.frame && !this.isFrameBorrowed) {
       this.frame.remove();
     }
     super.onunload();
+  }
+  canBorrowFrame() {
+    return Boolean(this.frame) && !this.isFrameBorrowed;
+  }
+  isFrameBorrowedForFloating() {
+    return this.isFrameBorrowed;
+  }
+  borrowFrame() {
+    var _a;
+    if (!this.canBorrowFrame()) {
+      return null;
+    }
+    this.isFrameBorrowed = true;
+    return (_a = this.frame) != null ? _a : null;
+  }
+  returnBorrowedFrame() {
+    if (!this.frame || !this.isFrameBorrowed) {
+      return;
+    }
+    this.isFrameBorrowed = false;
+    applyTabFrameLayout(this.frame);
+    this.contentEl.appendChild(this.frame);
   }
   onPaneMenu(menu, source) {
     super.onPaneMenu(menu, source);
@@ -6535,6 +6759,10 @@ var GateView = class extends import_obsidian.ItemView {
       item.setIcon("refresh-ccw");
       item.onClick(() => {
         var _a;
+        if (!this.frame) {
+          this.createFrame();
+          return;
+        }
         if (this.frame instanceof HTMLIFrameElement) {
           (_a = this.frame.contentWindow) == null ? void 0 : _a.location.reload();
         } else {
@@ -6547,11 +6775,15 @@ var GateView = class extends import_obsidian.ItemView {
       item.setIcon("home");
       item.onClick(() => {
         var _a, _b, _c, _d;
+        if (!this.frame) {
+          this.createFrame();
+          return;
+        }
         if (this.frame instanceof HTMLIFrameElement) {
           this.frame.src = (_b = (_a = this.options) == null ? void 0 : _a.url) != null ? _b : "about:blank";
         } else {
           void this.frame.loadURL((_d = (_c = this.options) == null ? void 0 : _c.url) != null ? _d : "about:blank").catch((error) => {
-            console.error("URLAutoFill: failed to load home page", error);
+            console.error("Extended Browser: failed to load home page", error);
           });
         }
       });
@@ -6560,7 +6792,7 @@ var GateView = class extends import_obsidian.ItemView {
       item.setTitle("Toggle DevTools");
       item.setIcon("file-cog");
       item.onClick(() => {
-        if (this.frame instanceof HTMLIFrameElement) {
+        if (!this.frame || this.frame instanceof HTMLIFrameElement) {
           return;
         }
         if (this.frame.isDevToolsOpened()) {
@@ -6574,22 +6806,41 @@ var GateView = class extends import_obsidian.ItemView {
       item.setTitle("Copy Page URL");
       item.setIcon("clipboard-copy");
       item.onClick(() => {
-        if (this.frame instanceof HTMLIFrameElement) {
-          import_electron.clipboard.writeText(this.frame.src);
+        if (!this.frame) {
+          import_electron2.clipboard.writeText(this.options.url);
           return;
         }
-        import_electron.clipboard.writeText(this.frame.getURL());
+        if (this.frame instanceof HTMLIFrameElement) {
+          import_electron2.clipboard.writeText(this.frame.src);
+          return;
+        }
+        import_electron2.clipboard.writeText(this.frame.getURL());
+      });
+    });
+    menu.addItem((item) => {
+      item.setTitle("Clear site session");
+      item.setIcon("eraser");
+      item.onClick(() => {
+        var _a;
+        void clearWebviewSession((_a = this.options.profileKey) != null ? _a : "extended-browser").then(() => {
+          new import_obsidian.Notice("Site session cleared. Reload the page to sign in again.");
+        });
       });
     });
     menu.addItem((item) => {
       item.setTitle("Open in browser");
       item.setIcon("globe");
       item.onClick(() => {
-        if (this.frame instanceof HTMLIFrameElement) {
-          window.open(this.frame.src);
+        const url = this.getCurrentUrl();
+        if (!this.frame) {
+          void import_electron2.shell.openExternal(url);
           return;
         }
-        window.open(this.frame.getURL());
+        if (this.frame instanceof HTMLIFrameElement) {
+          void import_electron2.shell.openExternal(this.frame.src);
+          return;
+        }
+        void import_electron2.shell.openExternal(this.frame.getURL());
       });
     });
   }
@@ -6615,7 +6866,28 @@ var GateView = class extends import_obsidian.ItemView {
       this.frameReadyCallbacks.push(callback);
     }
   }
+  getCurrentUrl() {
+    if (!this.frame) {
+      return this.options.url;
+    }
+    if (this.frame instanceof HTMLIFrameElement) {
+      return this.frame.src || this.options.url;
+    }
+    try {
+      return this.frame.getURL() || this.options.url;
+    } catch (e) {
+      return this.options.url;
+    }
+  }
+  getSnapshot() {
+    return { ...this.options, url: this.getCurrentUrl() };
+  }
   async setUrl(url) {
+    this.options.url = url;
+    if (!this.frame) {
+      this.createFrame();
+      return;
+    }
     if (this.frame instanceof HTMLIFrameElement) {
       this.frame.src = url;
     } else {
@@ -6626,6 +6898,16 @@ var GateView = class extends import_obsidian.ItemView {
     }
   }
 };
+var getOpenViewContext = (plugin, gate) => {
+  const autofillPlugin = plugin;
+  if (!autofillPlugin.floatingPreview) {
+    return { gate };
+  }
+  return {
+    floatingPreview: autofillPlugin.floatingPreview,
+    gate
+  };
+};
 var registerGate = (plugin, options) => {
   plugin.registerView(options.id, (leaf) => {
     return new GateView(leaf, options);
@@ -6635,58 +6917,54 @@ var registerGate = (plugin, options) => {
     (0, import_obsidian.addIcon)(options.id, options.icon);
     iconName = options.id;
   }
-  if (options.hasRibbon) {
-    plugin.addRibbonIcon(iconName, options.title, () => {
-      var _a;
-      void openView(plugin.app.workspace, options.id, options.position, (_a = options.openMode) != null ? _a : "tab").catch((error) => {
-        console.error("URLAutoFill: failed to open view from ribbon", error);
-      });
+  const openGate = () => {
+    var _a;
+    void openView(plugin.app.workspace, options.id, options.position, (_a = options.openMode) != null ? _a : "tab", getOpenViewContext(plugin, options)).catch((error) => {
+      console.error("Extended Browser: failed to open view", error);
     });
+  };
+  if (options.hasRibbon) {
+    plugin.addRibbonIcon(iconName, options.title, openGate);
   }
   plugin.addCommand({
-    id: `url-autofill-${btoa(options.url)}`,
+    id: `extended-browser-${btoa(options.url)}`,
     name: `Open ${options.title}`,
-    callback: () => {
-      var _a;
-      void openView(plugin.app.workspace, options.id, options.position, (_a = options.openMode) != null ? _a : "tab").catch((error) => {
-        console.error("URLAutoFill: failed to open view from command", error);
-      });
-    }
+    callback: openGate
   });
 };
 var createFormEditGate = (contentEl, gateOptions, onSubmit, submitButtonText) => {
-  new import_obsidian.Setting(contentEl).setName("URL").setClass("urlautofill-form-field").addText((text) => text.setPlaceholder("https://example.com").setValue(gateOptions.url).onChange((value) => {
+  new import_obsidian.Setting(contentEl).setName("URL").setClass("extended-browser-form-field").addText((text) => text.setPlaceholder("https://example.com").setValue(gateOptions.url).onChange((value) => {
     gateOptions.url = value.trim();
     gateOptions.loginUrl = value.trim();
   }));
-  new import_obsidian.Setting(contentEl).setName("Name").setClass("urlautofill-form-field").addText((text) => text.setValue(gateOptions.title).onChange((value) => {
+  new import_obsidian.Setting(contentEl).setName("Name").setClass("extended-browser-form-field").addText((text) => text.setValue(gateOptions.title).onChange((value) => {
     gateOptions.title = value;
   }));
-  new import_obsidian.Setting(contentEl).setName("Pin to menu").setClass("urlautofill-form-field").setDesc("If enabled, the gate will be pinned to the left bar").addToggle((text) => text.setValue(gateOptions.hasRibbon === true).onChange((value) => {
+  new import_obsidian.Setting(contentEl).setName("Pin to menu").setClass("extended-browser-form-field").setDesc("If enabled, the gate will be pinned to the left bar").addToggle((text) => text.setValue(gateOptions.hasRibbon === true).onChange((value) => {
     gateOptions.hasRibbon = value;
   }));
-  new import_obsidian.Setting(contentEl).setName("Automatic sign-in").setClass("urlautofill-form-field").setDesc("If enabled, URLAutoFill will submit the username and password when the page opens.").addToggle((toggle) => toggle.setValue(gateOptions.autoSignIn === true).onChange((value) => {
+  new import_obsidian.Setting(contentEl).setName("Automatic sign-in").setClass("extended-browser-form-field").setDesc("If enabled, Extended Browser will submit the username and password when the page opens.").addToggle((toggle) => toggle.setValue(gateOptions.autoSignIn === true).onChange((value) => {
     gateOptions.autoSignIn = value;
   }));
-  new import_obsidian.Setting(contentEl).setName("Sign-in method").setClass("urlautofill-form-field").setDesc("Use GET if the website rejects POST with a 405 error.").addDropdown((dropdown) => {
+  new import_obsidian.Setting(contentEl).setName("Sign-in method").setClass("extended-browser-form-field").setDesc("Use GET if the website rejects POST with a 405 error.").addDropdown((dropdown) => {
     var _a;
     return dropdown.addOption("GET", "GET").addOption("POST", "POST").setValue((_a = gateOptions.autoSignInMethod) != null ? _a : "GET").onChange((value) => {
       gateOptions.autoSignInMethod = value;
     });
   });
-  new import_obsidian.Setting(contentEl).setName("Open mode").setClass("urlautofill-form-field").setDesc("Choose whether the website opens in a tab or in a separate window.").addDropdown((dropdown) => {
+  new import_obsidian.Setting(contentEl).setName("Open mode").setClass("extended-browser-form-field").setDesc("Choose whether the website opens in a tab or in a separate window.").addDropdown((dropdown) => {
     var _a;
-    return dropdown.addOption("tab", "Tab").addOption("window", "Window").setValue((_a = gateOptions.openMode) != null ? _a : "tab").onChange((value) => {
+    return dropdown.addOption("tab", "Tab").addOption("window", "Window").addOption("floating", "Floating preview").setValue((_a = gateOptions.openMode) != null ? _a : "tab").onChange((value) => {
       gateOptions.openMode = value;
     });
   });
-  new import_obsidian.Setting(contentEl).setName("Username").setClass("urlautofill-form-field").addText((text) => {
+  new import_obsidian.Setting(contentEl).setName("Username").setClass("extended-browser-form-field").addText((text) => {
     var _a;
     return text.setPlaceholder("username or email").setValue((_a = gateOptions.username) != null ? _a : "").onChange((value) => {
       gateOptions.username = value.trim();
     });
   });
-  new import_obsidian.Setting(contentEl).setName("Password").setClass("urlautofill-form-field").addText((text) => {
+  new import_obsidian.Setting(contentEl).setName("Password").setClass("extended-browser-form-field").addText((text) => {
     var _a;
     text.inputEl.type = "password";
     text.setPlaceholder("password").setValue((_a = gateOptions.password) != null ? _a : "").onChange((value) => {
@@ -6694,14 +6972,14 @@ var createFormEditGate = (contentEl, gateOptions, onSubmit, submitButtonText) =>
     });
   });
   const advancedFieldsToggle = contentEl.createDiv({
-    cls: "urlautofill-advanced-fields-toggle"
+    cls: "extended-browser-advanced-fields-toggle"
   });
   const advancedArrow = advancedFieldsToggle.createSpan({
-    cls: "urlautofill-advanced-fields-arrow",
+    cls: "extended-browser-advanced-fields-arrow",
     text: "\u2304"
   });
   const advancedFieldsContainer = contentEl.createDiv({
-    cls: "urlautofill-advanced-fields-container"
+    cls: "extended-browser-advanced-fields-container"
   });
   advancedFieldsContainer.hide();
   let advancedFieldsOpen = false;
@@ -6717,13 +6995,13 @@ var createFormEditGate = (contentEl, gateOptions, onSubmit, submitButtonText) =>
       advancedFieldsToggle.removeClass("is-open");
     }
   });
-  new import_obsidian.Setting(advancedFieldsContainer).setName("Username field name").setClass("urlautofill-form-field").setDesc("Usually username, email, user, or login.").addText((text) => {
+  new import_obsidian.Setting(advancedFieldsContainer).setName("Username field name").setClass("extended-browser-form-field").setDesc("Usually username, email, user, or login.").addText((text) => {
     var _a;
     return text.setPlaceholder("username").setValue((_a = gateOptions.usernameField) != null ? _a : "username").onChange((value) => {
       gateOptions.usernameField = value.trim() || "username";
     });
   });
-  new import_obsidian.Setting(advancedFieldsContainer).setName("Password field name").setClass("urlautofill-form-field").setDesc("Usually password.").addText((text) => {
+  new import_obsidian.Setting(advancedFieldsContainer).setName("Password field name").setClass("extended-browser-form-field").setDesc("Usually password.").addText((text) => {
     var _a;
     return text.setPlaceholder("password").setValue((_a = gateOptions.passwordField) != null ? _a : "password").onChange((value) => {
       gateOptions.passwordField = value.trim() || "password";
@@ -6791,13 +7069,18 @@ Error details: ${error.message}`));
   return div;
 }
 function createFrame(options, height, ownerDoc = activeDocument) {
-  const frame = import_obsidian.Platform.isMobileApp ? createIframe(options, void 0, ownerDoc) : createWebviewTag(options, void 0, ownerDoc);
+  if (import_obsidian.Platform.isMobileApp) {
+    const frame2 = createIframe(options, void 0, ownerDoc);
+    frame2.setCssProps({ height });
+    return frame2;
+  }
+  const frame = createWebviewTag(options, void 0, ownerDoc);
   frame.setCssProps({ height });
   return frame;
 }
 function registerCodeBlockProcessor(plugin) {
   plugin.registerMarkdownCodeBlockProcessor("gate", (sourceCode, el, _ctx) => {
-    el.addClass("urlautofill-view");
+    el.addClass("extended-browser-view");
     const frame = processNewSyntax(plugin, sourceCode, el.ownerDocument);
     el.appendChild(frame);
   });
@@ -6828,7 +7111,7 @@ var createLinkConvertMenu = (menu, editor) => {
   const parsedLink = parseLink(selection);
   if (!parsedLink)
     return;
-  if (parsedLink.url.startsWith("obsidian://urlautofill") || parsedLink.url.startsWith("obsidian://opengate")) {
+  if (parsedLink.url.startsWith("obsidian://extended-browser") || parsedLink.url.startsWith("obsidian://urlautofill") || parsedLink.url.startsWith("obsidian://opengate")) {
     menu.addItem((item) => {
       item.setTitle("Convert to normal link").onClick(() => {
         const urlMatch = parsedLink.url.match(/url=([^&]+)/);
@@ -6844,22 +7127,291 @@ var createLinkConvertMenu = (menu, editor) => {
   } else {
     menu.addItem((item) => {
       item.setTitle("Convert to Gate Link").onClick(() => {
-        const gateLink = `[${parsedLink.title}](obsidian://urlautofill?title=${encodeURIComponent(parsedLink.title)}&url=${encodeURIComponent(parsedLink.url)})`;
+        const gateLink = `[${parsedLink.title}](obsidian://extended-browser?title=${encodeURIComponent(parsedLink.title)}&url=${encodeURIComponent(parsedLink.url)})`;
         editor.replaceSelection(gateLink);
       });
     });
   }
 };
 
+// src/floating-preview.ts
+var FLOATING_PREVIEW_WIDTH = 420;
+var FLOATING_PREVIEW_CONTENT_HEIGHT = 324;
+var FloatingPreviewManager = class {
+  constructor(restoreTab) {
+    this.restoreTab = restoreTab;
+    this.rootEl = null;
+    this.frameHostEl = null;
+    this.titleEl = null;
+    this.frame = null;
+    this.currentGate = null;
+    this.borrowedFrame = false;
+    this.frameReadyCallbacks = [];
+    this.isFrameReady = false;
+  }
+  isVisible() {
+    return this.rootEl !== null && !this.rootEl.classList.contains("is-hidden");
+  }
+  hasBorrowedFrame() {
+    return this.borrowedFrame;
+  }
+  getCurrentGateId() {
+    var _a, _b;
+    return (_b = (_a = this.currentGate) == null ? void 0 : _a.id) != null ? _b : null;
+  }
+  getSourceGateId() {
+    var _a, _b;
+    return (_b = (_a = this.currentGate) == null ? void 0 : _a.id) != null ? _b : null;
+  }
+  async showCustomContent(title, build) {
+    if (this.borrowedFrame) {
+      await this.restoreToTab();
+    }
+    if (!this.rootEl) {
+      this.createRoot();
+    }
+    this.currentGate = null;
+    this.rootEl.classList.remove("is-hidden");
+    this.updateTitle(title);
+    this.clearCreatedFrame();
+    if (this.frameHostEl) {
+      await build(this.frameHostEl);
+    }
+    this.isFrameReady = true;
+    this.frameReadyCallbacks.forEach((callback) => callback());
+    this.frameReadyCallbacks = [];
+  }
+  async adoptFromGateViewAndCloseTab(gateView) {
+    if (this.isVisible()) {
+      await this.restoreToTab();
+    }
+    const frame = gateView.borrowFrame();
+    const snapshot = gateView.getSnapshot();
+    if (!frame) {
+      gateView.leaf.detach();
+      await this.show(snapshot, snapshot.url);
+      return;
+    }
+    if (!this.rootEl) {
+      this.createRoot();
+    }
+    this.borrowedFrame = true;
+    this.frame = frame;
+    this.currentGate = snapshot;
+    this.isFrameReady = true;
+    this.frameReadyCallbacks = [];
+    this.rootEl.classList.remove("is-hidden");
+    this.updateTitle(gateView.getDisplayText());
+    if (this.frameHostEl) {
+      this.frameHostEl.empty();
+      const layout = this.getFrameLayout();
+      applyFloatingFrameLayout(frame, layout.width, layout.height);
+      this.frameHostEl.appendChild(frame);
+    }
+    gateView.leaf.detach();
+  }
+  async show(gate, navigatedUrl) {
+    if (this.borrowedFrame) {
+      await this.restoreToTab();
+    }
+    const displayUrl = navigatedUrl != null ? navigatedUrl : gate.url;
+    const gateForFrame = { ...gate, url: displayUrl };
+    if (!this.rootEl) {
+      this.createRoot();
+    }
+    this.currentGate = gateForFrame;
+    this.rootEl.classList.remove("is-hidden");
+    this.updateTitle(gate.title);
+    this.rebuildFrame(gateForFrame);
+  }
+  async hide() {
+    if (this.borrowedFrame && this.currentGate) {
+      await this.restoreToTab();
+      return;
+    }
+    this.hideWithoutRestore();
+  }
+  async restoreToTab() {
+    var _a;
+    if (!this.borrowedFrame || !this.frame || !this.currentGate) {
+      this.hideWithoutRestore();
+      return;
+    }
+    const gate = { ...this.currentGate };
+    const frame = this.frame;
+    const gateId = gate.id;
+    (_a = this.rootEl) == null ? void 0 : _a.classList.add("is-hidden");
+    if (this.frameHostEl) {
+      this.frameHostEl.empty();
+    }
+    setPendingFrameRestore(gateId, frame);
+    this.borrowedFrame = false;
+    this.frame = null;
+    this.isFrameReady = false;
+    this.frameReadyCallbacks = [];
+    await this.restoreTab(gate);
+  }
+  toggle(gate, navigatedUrl) {
+    if (this.isVisible()) {
+      void this.hide();
+      return;
+    }
+    const target = gate != null ? gate : this.currentGate;
+    if (target) {
+      void this.show(target, navigatedUrl);
+    }
+  }
+  onFrameReady(callback) {
+    if (this.isFrameReady) {
+      callback();
+    } else {
+      this.frameReadyCallbacks.push(callback);
+    }
+  }
+  async setUrl(url) {
+    if (this.currentGate) {
+      this.currentGate = { ...this.currentGate, url };
+    }
+    if (!this.frame) {
+      if (this.currentGate) {
+        await this.show({ ...this.currentGate, url }, url);
+      }
+      return;
+    }
+    if (this.frame instanceof HTMLIFrameElement) {
+      this.frame.src = url;
+      return;
+    }
+    if (this.frame.isLoading()) {
+      this.frame.stop();
+    }
+    await this.frame.loadURL(url);
+  }
+  destroy() {
+    this.borrowedFrame = false;
+    this.clearCreatedFrame();
+    if (this.rootEl) {
+      this.rootEl.remove();
+    }
+    this.rootEl = null;
+    this.frameHostEl = null;
+    this.titleEl = null;
+    this.frame = null;
+    this.currentGate = null;
+    this.frameReadyCallbacks = [];
+    this.isFrameReady = false;
+  }
+  hideWithoutRestore() {
+    if (this.rootEl) {
+      this.rootEl.classList.add("is-hidden");
+    }
+    this.clearCreatedFrame();
+  }
+  createRoot() {
+    this.rootEl = document.body.createDiv({ cls: "extended-browser-floating-preview is-hidden" });
+    const header = this.rootEl.createDiv({ cls: "extended-browser-floating-preview-header" });
+    this.titleEl = header.createDiv({ cls: "extended-browser-floating-preview-title" });
+    const actions = header.createDiv({ cls: "extended-browser-floating-preview-actions" });
+    const reloadBtn = actions.createEl("button", {
+      cls: "clickable-icon",
+      attr: { "aria-label": "Reload", type: "button" }
+    });
+    (0, import_obsidian2.setIcon)(reloadBtn, "refresh-ccw");
+    reloadBtn.addEventListener("click", () => this.reload());
+    const closeBtn = actions.createEl("button", {
+      cls: "clickable-icon",
+      attr: { "aria-label": "Close", type: "button" }
+    });
+    (0, import_obsidian2.setIcon)(closeBtn, "cross");
+    closeBtn.addEventListener("click", () => {
+      void this.hide();
+    });
+    this.frameHostEl = this.rootEl.createDiv({ cls: "extended-browser-floating-preview-content" });
+  }
+  getFrameLayout() {
+    const width = FLOATING_PREVIEW_WIDTH - 2;
+    const height = FLOATING_PREVIEW_CONTENT_HEIGHT;
+    return { width, height };
+  }
+  updateTitle(title) {
+    if (this.titleEl) {
+      this.titleEl.setText(title);
+    }
+  }
+  reload() {
+    var _a;
+    if (!this.frame) {
+      if (this.currentGate) {
+        this.rebuildFrame(this.currentGate);
+      }
+      return;
+    }
+    if (this.frame instanceof HTMLIFrameElement) {
+      (_a = this.frame.contentWindow) == null ? void 0 : _a.location.reload();
+      return;
+    }
+    this.frame.reload();
+  }
+  clearCreatedFrame() {
+    if (this.borrowedFrame) {
+      return;
+    }
+    if (this.frame) {
+      this.frame.remove();
+    }
+    this.frame = null;
+    this.isFrameReady = false;
+    this.frameReadyCallbacks = [];
+    if (this.frameHostEl) {
+      this.frameHostEl.empty();
+    }
+  }
+  rebuildFrame(gate) {
+    if (!this.frameHostEl) {
+      return;
+    }
+    this.clearCreatedFrame();
+    const layout = this.getFrameLayout();
+    const onReady = () => {
+      if (!this.isFrameReady) {
+        this.isFrameReady = true;
+        this.frameReadyCallbacks.forEach((callback) => callback());
+        this.frameReadyCallbacks = [];
+      }
+    };
+    if (import_obsidian2.Platform.isMobileApp) {
+      const iframe = createIframe(gate, onReady, this.frameHostEl.ownerDocument);
+      if (!iframe) {
+        return;
+      }
+      this.frame = iframe;
+      applyFloatingFrameLayout(this.frame, layout.width, layout.height);
+      this.frameHostEl.appendChild(this.frame);
+      return;
+    }
+    const webview = createWebviewTag(gate, onReady, document, {
+      width: layout.width,
+      height: layout.height,
+      deferSrc: true
+    });
+    if (!webview) {
+      return;
+    }
+    this.frame = webview;
+    this.frameHostEl.appendChild(webview);
+    startWebviewNavigation(webview, gate);
+  }
+};
+
 // src/passkeys.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 var appendSvgIcon = (container, iconMarkup) => {
   const parsed = new DOMParser().parseFromString(iconMarkup, "image/svg+xml");
   const svgNode = container.ownerDocument.importNode(parsed.documentElement, true);
   svgNode.classList.add("svg-icon");
   container.appendChild(svgNode);
 };
-var FirstPasskey = class extends import_obsidian2.Modal {
+var FirstPasskey = class extends import_obsidian3.Modal {
   constructor(app, gateOptions, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -6867,7 +7419,7 @@ var FirstPasskey = class extends import_obsidian2.Modal {
   }
   onOpen() {
     const { contentEl } = this;
-    this.modalEl.addClass("urlautofill-passkey-modal");
+    this.modalEl.addClass("extended-browser-passkey-modal");
     this.titleEl.setText("Welcome, Create your first passkey !");
     createFormEditGate(contentEl, this.gateOptions, (result) => {
       this.onSubmit(result);
@@ -6878,7 +7430,7 @@ var FirstPasskey = class extends import_obsidian2.Modal {
     this.contentEl.empty();
   }
 };
-var ModalEditGate = class extends import_obsidian2.Modal {
+var ModalEditGate = class extends import_obsidian3.Modal {
   constructor(app, gateOptions, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -6886,7 +7438,7 @@ var ModalEditGate = class extends import_obsidian2.Modal {
   }
   onOpen() {
     const { contentEl } = this;
-    contentEl.createEl("h3", { text: "URL AutoFill" });
+    contentEl.createEl("h3", { text: "Extended Browser" });
     createFormEditGate(contentEl, this.gateOptions, (result) => {
       this.onSubmit(result);
       this.close();
@@ -6896,7 +7448,7 @@ var ModalEditGate = class extends import_obsidian2.Modal {
     this.contentEl.empty();
   }
 };
-var ModalInsertLink = class extends import_obsidian2.Modal {
+var ModalInsertLink = class extends import_obsidian3.Modal {
   constructor(app, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -6910,23 +7462,24 @@ var ModalInsertLink = class extends import_obsidian2.Modal {
   }
   createFormInsertLink() {
     let gateOptions = createEmptyGateOption();
-    new import_obsidian2.Setting(this.contentEl).setName("URL").setClass("urlautofill-form-field").addText((text) => text.setPlaceholder("https://example.com").onChange((value) => {
+    new import_obsidian3.Setting(this.contentEl).setName("URL").setClass("extended-browser-form-field").addText((text) => text.setPlaceholder("https://example.com").onChange((value) => {
       gateOptions.url = value;
     }));
-    new import_obsidian2.Setting(this.contentEl).setName("Title").setClass("urlautofill-form-field").addText((text) => text.onChange((value) => {
+    new import_obsidian3.Setting(this.contentEl).setName("Title").setClass("extended-browser-form-field").addText((text) => text.onChange((value) => {
       gateOptions.title = value;
     }));
-    new import_obsidian2.Setting(this.contentEl).addButton((btn) => btn.setButtonText("Insert Link").setCta().onClick(() => {
+    new import_obsidian3.Setting(this.contentEl).addButton((btn) => btn.setButtonText("Insert Link").setCta().onClick(() => {
       gateOptions = normalizeGateOption(gateOptions);
       this.onSubmit(gateOptions);
     }));
   }
 };
-var ModalListGates = class extends import_obsidian2.Modal {
-  constructor(app, gates, onSubmit) {
+var ModalListGates = class extends import_obsidian3.Modal {
+  constructor(app, gates, onSubmit, getOpenViewContext2) {
     super(app);
     this.onSubmit = onSubmit;
     this.gates = gates;
+    this.getOpenViewContext = getOpenViewContext2;
   }
   onOpen() {
     var _a;
@@ -6934,10 +7487,10 @@ var ModalListGates = class extends import_obsidian2.Modal {
     for (const gateId in this.gates) {
       const gate = this.gates[gateId];
       const container = contentEl.createEl("div", {
-        cls: "urlautofill-quick-list-item"
+        cls: "extended-browser-quick-list-item"
       });
       if (!gate.icon.startsWith("<svg")) {
-        const iconSvg = (_a = (0, import_obsidian2.getIcon)(gate.icon)) != null ? _a : (0, import_obsidian2.getIcon)("link-external");
+        const iconSvg = (_a = (0, import_obsidian3.getIcon)(gate.icon)) != null ? _a : (0, import_obsidian3.getIcon)("link-external");
         if (iconSvg) {
           iconSvg.classList.add("svg-icon");
           container.appendChild(iconSvg);
@@ -6947,8 +7500,9 @@ var ModalListGates = class extends import_obsidian2.Modal {
       }
       container.createEl("span", { text: gate.title });
       container.addEventListener("click", () => {
-        void openView(this.app.workspace, gate.id, gate.position).catch((error) => {
-          console.error("URLAutoFill: failed to open passkey from list", error);
+        var _a2, _b;
+        void openView(this.app.workspace, gate.id, gate.position, (_a2 = gate.openMode) != null ? _a2 : "tab", (_b = this.getOpenViewContext) == null ? void 0 : _b.call(this, gate)).catch((error) => {
+          console.error("Extended Browser: failed to open passkey from list", error);
         });
         this.close();
       });
@@ -6960,7 +7514,7 @@ var setupInsertLinkMenu = (plugin) => {
     menu.addItem((item) => {
       item.setTitle("Insert Gate Link").onClick(() => {
         const modal = new ModalInsertLink(plugin.app, (gate) => {
-          const gateLink = `[${gate.title}](obsidian://urlautofill?title=${encodeURIComponent(gate.title)}&url=${encodeURIComponent(gate.url)})`;
+          const gateLink = `[${gate.title}](obsidian://extended-browser?title=${encodeURIComponent(gate.title)}&url=${encodeURIComponent(gate.url)})`;
           editor.replaceSelection(gateLink);
           modal.close();
         });
@@ -6975,14 +7529,52 @@ var DEFAULT_SETTINGS = {
   uuid: "",
   gates: {}
 };
-var SettingTab = class extends import_obsidian3.PluginSettingTab {
+var SettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
   async updateGate(gate) {
     await this.plugin.addGate(gate);
-    this.update();
+    this.refreshTab();
+  }
+  refreshTab() {
+    const tab = this;
+    if (typeof tab.update === "function") {
+      tab.update();
+    } else {
+      this.display();
+    }
+  }
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.createEl("button", { text: "New passkey", cls: "mod-cta" }).addEventListener("click", () => {
+      new ModalEditGate(this.app, createEmptyGateOption(), (updatedGate) => {
+        void this.updateGate(updatedGate);
+      }).open();
+    });
+    containerEl.createEl("hr");
+    const settingContainerEl = containerEl.createDiv("setting-container");
+    for (const gate of Object.values(this.plugin.settings.gates)) {
+      const gateEl = settingContainerEl.createDiv({
+        attr: { "data-gate-id": gate.id },
+        cls: "extended-browser-setting-gate"
+      });
+      new import_obsidian4.Setting(gateEl).setName(gate.title).setDesc(gate.url).addButton((button) => {
+        button.setButtonText("Edit").onClick(() => {
+          new ModalEditGate(this.app, gate, (updatedGate) => {
+            void this.updateGate(updatedGate);
+          }).open();
+        });
+      }).addButton((button) => {
+        button.setButtonText("Delete").onClick(() => {
+          void this.plugin.removeGate(gate.id).then(() => {
+            this.refreshTab();
+          });
+        });
+      });
+    }
   }
   getSettingDefinitions() {
     const gates = Object.values(this.plugin.settings.gates);
@@ -7004,7 +7596,7 @@ var SettingTab = class extends import_obsidian3.PluginSettingTab {
           desc: gate.url,
           render: (setting) => {
             setting.settingEl.setAttribute("data-gate-id", gate.id);
-            setting.settingEl.addClass("urlautofill-setting-gate");
+            setting.settingEl.addClass("extended-browser-setting-gate");
             setting.addButton((button) => button.setButtonText("Edit").onClick(() => {
               new ModalEditGate(this.app, gate, (updatedGate) => {
                 void this.updateGate(updatedGate);
@@ -7012,7 +7604,7 @@ var SettingTab = class extends import_obsidian3.PluginSettingTab {
             }));
             setting.addButton((button) => button.setButtonText("Delete").onClick(() => {
               void this.plugin.removeGate(gate.id).then(() => {
-                this.update();
+                this.refreshTab();
               });
             }));
           }
@@ -7021,17 +7613,84 @@ var SettingTab = class extends import_obsidian3.PluginSettingTab {
     ];
   }
 };
-var URLAutoFillPlugin = class extends import_obsidian3.Plugin {
+var ExtendedBrowserPlugin = class extends import_obsidian4.Plugin {
+  constructor() {
+    super(...arguments);
+    this.lastGateView = null;
+  }
   async onload() {
     await this.loadSettings();
+    this.floatingPreview = new FloatingPreviewManager((gate) => this.restoreGateToTab(gate));
+    this.addSettingTab(new SettingTab(this.app, this));
     await this.mayShowFirstPasskey();
     await this.initGates();
-    this.addSettingTab(new SettingTab(this.app, this));
     this.registerCommands();
     this.registerProtocol();
     setupLinkConvertMenu(this);
     setupInsertLinkMenu(this);
     registerCodeBlockProcessor(this);
+    this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
+      if ((leaf == null ? void 0 : leaf.view) instanceof GateView) {
+        this.lastGateView = leaf.view;
+      }
+    }));
+  }
+  onunload() {
+    this.floatingPreview.destroy();
+  }
+  getOpenViewContext(gate) {
+    return {
+      floatingPreview: this.floatingPreview,
+      gate
+    };
+  }
+  findTargetGateView() {
+    var _a, _b, _c;
+    const activeView = (_a = this.app.workspace.activeLeaf) == null ? void 0 : _a.view;
+    if (activeView instanceof GateView) {
+      return activeView;
+    }
+    if (((_b = this.lastGateView) == null ? void 0 : _b.leaf) && this.lastGateView.leaf.view === this.lastGateView) {
+      return this.lastGateView;
+    }
+    for (const gate of Object.values(this.settings.gates)) {
+      for (const leaf of this.app.workspace.getLeavesOfType(gate.id)) {
+        if (leaf.view instanceof GateView) {
+          return leaf.view;
+        }
+      }
+    }
+    const tempLeaves = this.app.workspace.getLeavesOfType("temp-gate");
+    if (((_c = tempLeaves[0]) == null ? void 0 : _c.view) instanceof GateView) {
+      return tempLeaves[0].view;
+    }
+    return null;
+  }
+  async restoreGateToTab(gate) {
+    return openView(this.app.workspace, gate.id, gate.position, "tab", this.getOpenViewContext(gate));
+  }
+  async toggleFloatingPreview() {
+    var _a;
+    if (this.floatingPreview.isVisible()) {
+      if (this.floatingPreview.hasBorrowedFrame()) {
+        await this.floatingPreview.restoreToTab();
+      } else {
+        await this.floatingPreview.hide();
+      }
+      return;
+    }
+    const gateView = this.findTargetGateView();
+    if (gateView) {
+      await this.floatingPreview.adoptFromGateViewAndCloseTab(gateView);
+      return;
+    }
+    const gate = (_a = Object.values(this.settings.gates)[0]) != null ? _a : normalizeGateOption({
+      id: "temp-gate",
+      title: "Temp Gate",
+      icon: "globe",
+      url: "about:blank"
+    });
+    void this.floatingPreview.show(gate);
   }
   async mayShowFirstPasskey() {
     if (this.settings.uuid === "") {
@@ -7040,7 +7699,7 @@ var URLAutoFillPlugin = class extends import_obsidian3.Plugin {
       if (Object.keys(this.settings.gates).length === 0) {
         new FirstPasskey(this.app, createEmptyGateOption(), (gate) => {
           void this.addGate(gate).catch((error) => {
-            console.error("URLAutoFill: failed to save first passkey", error);
+            console.error("Extended Browser: failed to save first passkey", error);
           });
         }).open();
       }
@@ -7060,34 +7719,43 @@ var URLAutoFillPlugin = class extends import_obsidian3.Plugin {
   }
   registerCommands() {
     this.addCommand({
-      id: `url-autofill-create-new`,
+      id: `extended-browser-create-new`,
       name: `Create new site`,
       callback: () => {
         new ModalEditGate(this.app, createEmptyGateOption(), (gate) => {
           void this.addGate(gate).catch((error) => {
-            console.error("URLAutoFill: failed to create site", error);
+            console.error("Extended Browser: failed to create site", error);
           });
         }).open();
       }
     });
     this.addCommand({
-      id: `url-autofill-list-gates`,
+      id: `extended-browser-list-gates`,
       name: `List sites`,
       callback: () => {
         new ModalListGates(this.app, this.settings.gates, (gate) => {
           void this.addGate(gate).catch((error) => {
-            console.error("URLAutoFill: failed to add site from list", error);
+            console.error("Extended Browser: failed to add site from list", error);
           });
-        }).open();
+        }, (gate) => this.getOpenViewContext(gate)).open();
+      }
+    });
+    this.addCommand({
+      id: `extended-browser-toggle-floating-preview`,
+      name: `Toggle floating preview`,
+      callback: () => {
+        void this.toggleFloatingPreview();
       }
     });
   }
   registerProtocol() {
-    this.registerObsidianProtocolHandler("urlautofill", (data) => {
+    const handleProtocol = (data) => {
       void this.handleCustomProtocol(data).catch((error) => {
-        console.error("URLAutoFill: protocol handler failed", error);
+        console.error("Extended Browser: protocol handler failed", error);
       });
-    });
+    };
+    this.registerObsidianProtocolHandler("extended-browser", handleProtocol);
+    this.registerObsidianProtocolHandler("urlautofill", handleProtocol);
   }
   getGateOptionFromProtocolData(data) {
     const { title, url, id, position } = data;
@@ -7112,20 +7780,43 @@ var URLAutoFillPlugin = class extends import_obsidian3.Plugin {
     return Object.values(this.settings.gates).find((gate) => gate[field].toLowerCase() === value.toLowerCase());
   }
   async handleCustomProtocol(data) {
-    var _a;
+    var _a, _b, _c;
     const targetGate = this.getGateOptionFromProtocolData(data);
     if (targetGate === void 0) {
       if (!data.url) {
-        new import_obsidian3.Notice("Missing url parameter");
+        new import_obsidian4.Notice("Missing url parameter");
         return;
       }
     }
-    const gate = await openView(this.app.workspace, (targetGate == null ? void 0 : targetGate.id) || "temp-gate", targetGate == null ? void 0 : targetGate.position, (_a = targetGate == null ? void 0 : targetGate.openMode) != null ? _a : "tab");
-    const gateView = gate.view;
+    const openMode = (_a = targetGate == null ? void 0 : targetGate.openMode) != null ? _a : "tab";
+    const url = (_c = (_b = data.url) != null ? _b : targetGate == null ? void 0 : targetGate.url) != null ? _c : "about:blank";
+    if (openMode === "floating" && targetGate) {
+      const existingLeaf = this.app.workspace.getLeavesOfType(targetGate.id)[0];
+      if ((existingLeaf == null ? void 0 : existingLeaf.view) instanceof GateView && existingLeaf.view.canBorrowFrame()) {
+        await this.floatingPreview.adoptFromGateViewAndCloseTab(existingLeaf.view);
+      } else {
+        if ((existingLeaf == null ? void 0 : existingLeaf.view) instanceof GateView) {
+          existingLeaf.detach();
+        }
+        await this.floatingPreview.show(targetGate);
+      }
+      this.floatingPreview.onFrameReady(() => {
+        if (!this.floatingPreview.getSourceGateId()) {
+          void this.floatingPreview.setUrl(url).catch((error) => {
+            console.error("Extended Browser: failed to set URL from protocol handler", error);
+          });
+        }
+      });
+      return;
+    }
+    const leaf = await openView(this.app.workspace, (targetGate == null ? void 0 : targetGate.id) || "temp-gate", targetGate == null ? void 0 : targetGate.position, openMode, targetGate ? this.getOpenViewContext(targetGate) : void 0);
+    if (!leaf) {
+      return;
+    }
+    const gateView = leaf.view;
     gateView == null ? void 0 : gateView.onFrameReady(() => {
-      var _a2, _b;
-      void gateView.setUrl((_b = (_a2 = data.url) != null ? _a2 : targetGate == null ? void 0 : targetGate.url) != null ? _b : "about:blank").catch((error) => {
-        console.error("URLAutoFill: failed to set URL from protocol handler", error);
+      void gateView.setUrl(url).catch((error) => {
+        console.error("Extended Browser: failed to set URL from protocol handler", error);
       });
     });
   }
@@ -7134,21 +7825,21 @@ var URLAutoFillPlugin = class extends import_obsidian3.Plugin {
     if (!Object.prototype.hasOwnProperty.call(this.settings.gates, normalizedGate.id)) {
       registerGate(this, normalizedGate);
     } else {
-      new import_obsidian3.Notice("This change will take effect after you reload Obsidian.");
+      new import_obsidian4.Notice("This change will take effect after you reload Obsidian.");
     }
     this.settings.gates[normalizedGate.id] = normalizedGate;
     await this.saveSettings();
   }
   async removeGate(gateId) {
     if (!this.settings.gates[gateId]) {
-      new import_obsidian3.Notice("Gate not found");
+      new import_obsidian4.Notice("Gate not found");
       return;
     }
     const gate = this.settings.gates[gateId];
-    await unloadView(this.app.workspace, gate);
+    await unloadView(this.app.workspace, gate, this.getOpenViewContext(gate));
     delete this.settings.gates[gateId];
     await this.saveSettings();
-    new import_obsidian3.Notice("This change will take effect after you reload Obsidian.");
+    new import_obsidian4.Notice("This change will take effect after you reload Obsidian.");
   }
   async loadSettings() {
     const loaded = await this.loadData();
@@ -7164,7 +7855,7 @@ var URLAutoFillPlugin = class extends import_obsidian3.Plugin {
           try {
             this.settings.gates[gateId] = normalizeGateOption(gateValue);
           } catch (error) {
-            console.error(`URLAutoFill: skipped invalid passkey "${gateId}"`, error);
+            console.error(`Extended Browser: skipped invalid passkey "${gateId}"`, error);
           }
         }
       }

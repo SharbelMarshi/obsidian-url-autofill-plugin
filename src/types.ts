@@ -1,5 +1,5 @@
 export type GateFrameOptionType = 'left' | 'center' | 'right'
-export type GateOpenMode = 'tab' | 'window'
+export type GateOpenMode = 'tab' | 'window' | 'floating'
 export type GateAutoSignInMethod = 'GET' | 'POST'
 
 export type GateFrameOption = {

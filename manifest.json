@@ -1,9 +1,9 @@
 {
-	"id": "urlautofill",
-	"name": "URLAutoFill",
+	"id": "extended-browser",
+	"name": "Extended Browser",
 	"minAppVersion": "1.13.0",
-	"version": "0.1.1",
-	"description": "Fill configured URL login fields from local passkey profiles.",
+	"version": "0.1.2",
+	"description": "Embed websites in Obsidian and open them from local passkey profiles.",
 	"author": "Sharbel Marshi",
 	"authorUrl": "",
 	"isDesktopOnly": true

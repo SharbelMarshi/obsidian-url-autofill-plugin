@@ -8,16 +8,20 @@ import {
     Notice,
     Platform,
     Plugin,
+    requestUrl,
     Setting,
     Workspace,
     WorkspaceLeaf
 } from 'obsidian'
 import { parse } from 'yaml'
+import { isRecord } from './guards'
 import { GateAutoSignInMethod, GateFrameOption, GateFrameOptionType, GateOpenMode, MarkdownLink } from './types'
 
 const DEFAULT_URL = 'about:blank'
 const GOOGLE_URL = 'https://google.com'
-const URL_AUTOFILL_WEBVIEW_CLASS = 'url-autofill-webview'
+const URL_AUTOFILL_WEBVIEW_CLASS = 'urlautofill-webview'
+
+type FrameReadyCallback = () => void
 
 function getDefaultUserAgent() {
     return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
@@ -29,9 +33,8 @@ export const getSvgIcon = (siteUrl: string): string => {
 }
 
 export const fetchTitle = async (url: string): Promise<string> => {
-    const response = await fetch(url)
-    const text = await response.text()
-    const doc = new DOMParser().parseFromString(text, 'text/html')
+    const response = await requestUrl({ url })
+    const doc = new DOMParser().parseFromString(response.text, 'text/html')
     return doc.title
 }
 
@@ -47,30 +50,31 @@ const hasAutoSignInConfig = (params: Partial<GateFrameOption>): boolean => {
 }
 
 const submitAutoSignInForm = (iframe: HTMLIFrameElement, params: Partial<GateFrameOption>) => {
-    const form = document.createElement('form')
+    const doc = iframe.ownerDocument
+    const form = doc.createElement('form')
     form.method = params.autoSignInMethod ?? 'GET'
     form.action = params.loginUrl?.trim() ?? ''
     form.target = iframe.name
-    form.style.display = 'none'
+    form.addClass('urlautofill-hidden-form')
 
-    const usernameInput = document.createElement('input')
+    const usernameInput = doc.createElement('input')
     usernameInput.type = 'hidden'
     usernameInput.name = params.usernameField?.trim() ?? 'username'
     usernameInput.value = params.username?.trim() ?? ''
     form.appendChild(usernameInput)
 
-    const passwordInput = document.createElement('input')
+    const passwordInput = doc.createElement('input')
     passwordInput.type = 'hidden'
     passwordInput.name = params.passwordField?.trim() ?? 'password'
     passwordInput.value = params.password ?? ''
     form.appendChild(passwordInput)
 
-    document.body.appendChild(form)
+    doc.body.appendChild(form)
     form.submit()
     form.remove()
 }
 
-    const createAutoSignInScript = (params: Partial<GateFrameOption>): string => {
+const createAutoSignInScript = (params: Partial<GateFrameOption>): string => {
     const loginUrl = JSON.stringify(params.loginUrl?.trim() ?? '')
     const method = JSON.stringify(params.autoSignInMethod ?? 'GET')
     const usernameField = JSON.stringify(params.usernameField?.trim() ?? 'username')
@@ -80,7 +84,9 @@ const submitAutoSignInForm = (iframe: HTMLIFrameElement, params: Partial<GateFra
 
     return `
         (() => {
-            document.body.innerHTML = '';
+            while (document.body.firstChild) {
+                document.body.removeChild(document.body.firstChild);
+            }
             const form = document.createElement('form');
             form.method = ${method};
             form.action = ${loginUrl};
@@ -101,6 +107,31 @@ const submitAutoSignInForm = (iframe: HTMLIFrameElement, params: Partial<GateFra
             form.submit();
         })();
     `
+}
+
+const injectIframeCss = (iframe: HTMLIFrameElement, css: string) => {
+    const contentDocument = iframe.contentDocument
+    if (!contentDocument) {
+        return
+    }
+
+    const link = contentDocument.createElement('link')
+    link.rel = 'stylesheet'
+    link.href = `data:text/css;charset=utf-8,${encodeURIComponent(css)}`
+    contentDocument.head.appendChild(link)
+}
+
+const runIframeJs = (iframe: HTMLIFrameElement, js: string) => {
+    const contentWindow = iframe.contentWindow as (Window & { eval: (source: string) => unknown }) | null
+    if (!contentWindow) {
+        return
+    }
+
+    try {
+        contentWindow.eval(js)
+    } catch (error) {
+        console.error('URLAutoFill: failed to run JS in iframe', error)
+    }
 }
 
 export const createEmptyGateOption = (): GateFrameOption => {
@@ -134,7 +165,7 @@ export const normalizeGateOption = (gate: Partial<GateFrameOption>): GateFrameOp
     }
 
     if (gate.id === '' || gate.id === undefined) {
-        let seedString = gate.url!
+        let seedString = gate.url
         if (gate.profileKey != undefined && gate.profileKey !== 'url-autofill' && gate.profileKey !== 'open-gate' && gate.profileKey !== '') {
             seedString += gate.profileKey
         }
@@ -183,14 +214,14 @@ export const normalizeGateOption = (gate: Partial<GateFrameOption>): GateFrameOp
     if (gate.openMode === undefined) {
         gate.openMode = 'tab'
     }
-    return <GateFrameOption>gate
+    return gate as GateFrameOption
 }
 
-export const createIframe = (params: Partial<GateFrameOption>, onReady?: () => void): HTMLIFrameElement => {
-    const iframe = document.createElement('iframe')
+export const createIframe = (params: Partial<GateFrameOption>, onReady?: () => void, parentDoc: Document = activeDocument): HTMLIFrameElement => {
+    const iframe = parentDoc.createElement('iframe')
     const shouldAutoSignIn = hasAutoSignInConfig(params)
 
-    iframe.name = `url-autofill-frame-${Math.random().toString(36).slice(2)}`
+    iframe.name = `urlautofill-frame-${Math.random().toString(36).slice(2)}`
     iframe.setAttribute('allowpopups', '')
 
     if ('credentialless' in iframe) {
@@ -200,7 +231,7 @@ export const createIframe = (params: Partial<GateFrameOption>, onReady?: () => v
     iframe.setAttribute('src', shouldAutoSignIn ? 'about:blank' : params.url ?? 'about:blank')
     iframe.setAttribute('sandbox', 'allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts allow-top-navigation-by-user-activation')
     iframe.setAttribute('allow', 'encrypted-media; fullscreen; oversized-images; picture-in-picture; sync-xhr; geolocation')
-    iframe.addClass('url-autofill-iframe')
+    iframe.addClass('urlautofill-iframe')
 
     let submittedAutoSignIn = false
 
@@ -211,26 +242,22 @@ export const createIframe = (params: Partial<GateFrameOption>, onReady?: () => v
             return
         }
 
-        onReady?.call(null)
+        onReady?.()
 
         if (params?.css) {
-            const style = document.createElement('style')
-            style.textContent = params.css
-            iframe.contentDocument?.head.appendChild(style)
+            injectIframeCss(iframe, params.css)
         }
 
         if (params?.js) {
-            const script = document.createElement('script')
-            script.textContent = params.js
-            iframe.contentDocument?.head.appendChild(script)
+            runIframeJs(iframe, params.js)
         }
     })
 
     return iframe
 }
 
-export const createWebviewTag = (params: Partial<GateFrameOption>, onReady?: () => void, parentDoc?: Document): WebviewTag => {
-    const webviewTag = (parentDoc || document).createElement('webview') as unknown as WebviewTag
+export const createWebviewTag = (params: Partial<GateFrameOption>, onReady?: () => void, parentDoc: Document = activeDocument): WebviewTag => {
+    const webviewTag = parentDoc.createElement('webview') as unknown as WebviewTag
     const shouldAutoSignIn = hasAutoSignInConfig(params)
     let submittedAutoSignIn = false
 
@@ -238,13 +265,10 @@ export const createWebviewTag = (params: Partial<GateFrameOption>, onReady?: () 
     webviewTag.setAttribute('src', shouldAutoSignIn ? DEFAULT_URL : params.url ?? DEFAULT_URL)
     webviewTag.setAttribute('httpreferrer', params.url ?? GOOGLE_URL)
 
-    // Keep disabled.
-    // webviewTag.setAttribute('allowpopups', 'true')
-
     webviewTag.addClass(URL_AUTOFILL_WEBVIEW_CLASS)
     webviewTag.setAttribute('useragent', params.userAgent || getDefaultUserAgent())
 
-    webviewTag.addEventListener('new-window', async (event: Event) => {
+    webviewTag.addEventListener('new-window', (event: Event) => {
         const popupEvent = event as Event & {
             url?: string
             preventDefault: () => void
@@ -253,12 +277,15 @@ export const createWebviewTag = (params: Partial<GateFrameOption>, onReady?: () 
         popupEvent.preventDefault()
 
         if (popupEvent.url) {
-            await webviewTag.loadURL(popupEvent.url)
+            void webviewTag.loadURL(popupEvent.url).catch((error) => {
+                console.error('URLAutoFill: failed to open popup URL in webview', error)
+            })
         }
     })
 
-    webviewTag.addEventListener('dom-ready', async () => {
-        await webviewTag.executeJavaScript(`
+    webviewTag.addEventListener('dom-ready', () => {
+        void webviewTag
+            .executeJavaScript(`
             (() => {
                 if (window.__urlAutoFillPopupPatchInstalled) return;
                 window.__urlAutoFillPopupPatchInstalled = true;
@@ -335,26 +362,30 @@ export const createWebviewTag = (params: Partial<GateFrameOption>, onReady?: () 
                 });
             })();
         `)
+            .then(async () => {
+                if (shouldAutoSignIn && !submittedAutoSignIn) {
+                    submittedAutoSignIn = true
+                    await webviewTag.executeJavaScript(createAutoSignInScript(params))
+                    return
+                }
 
-        if (shouldAutoSignIn && !submittedAutoSignIn) {
-            submittedAutoSignIn = true
-            await webviewTag.executeJavaScript(createAutoSignInScript(params))
-            return
-        }
+                if (params.zoomFactor) {
+                    webviewTag.setZoomFactor(params.zoomFactor)
+                }
 
-        if (params.zoomFactor) {
-            webviewTag.setZoomFactor(params.zoomFactor)
-        }
+                if (params?.css) {
+                    await webviewTag.insertCSS(params.css)
+                }
 
-        if (params?.css) {
-            await webviewTag.insertCSS(params.css)
-        }
+                if (params?.js) {
+                    await webviewTag.executeJavaScript(params.js)
+                }
 
-        if (params?.js) {
-            await webviewTag.executeJavaScript(params.js)
-        }
-
-        onReady?.call(null)
+                onReady?.()
+            })
+            .catch((error) => {
+                console.error('URLAutoFill: webview dom-ready handler failed', error)
+            })
     })
 
     return webviewTag
@@ -383,38 +414,38 @@ export const isViewExist = (workspace: Workspace, id: string): boolean => {
     return leafs.length > 0
 }
 
-    const createView = async (
-        workspace: Workspace,
-        id: string,
-        position?: GateFrameOptionType,
-        openMode: GateOpenMode = 'tab'
-    ): Promise<WorkspaceLeaf> => {
-        let leaf: WorkspaceLeaf | null = null
+const createView = async (
+    workspace: Workspace,
+    id: string,
+    position?: GateFrameOptionType,
+    openMode: GateOpenMode = 'tab'
+): Promise<WorkspaceLeaf> => {
+    let leaf: WorkspaceLeaf | null = null
 
-        if (openMode === 'window') {
-            leaf = workspace.getLeaf('window')
-        } else {
-            switch (position) {
-                case 'left':
-                    leaf = workspace.getLeftLeaf(false)
-                    break
-                case 'center':
-                    leaf = workspace.getLeaf(true)
-                    break
-                case 'right':
-                default:
-                    leaf = workspace.getRightLeaf(false)
-                    break
-            }
+    if (openMode === 'window') {
+        leaf = workspace.getLeaf('window')
+    } else {
+        switch (position) {
+            case 'left':
+                leaf = workspace.getLeftLeaf(false)
+                break
+            case 'center':
+                leaf = workspace.getLeaf(true)
+                break
+            case 'right':
+            default:
+                leaf = workspace.getRightLeaf(false)
+                break
         }
-
-        if (!leaf) {
-            throw new Error(`Failed to create workspace leaf for view: ${id}`)
-        }
-
-        await leaf.setViewState({ type: id, active: true })
-        return leaf
     }
+
+    if (!leaf) {
+        throw new Error(`Failed to create workspace leaf for view: ${id}`)
+    }
+
+    await leaf.setViewState({ type: id, active: true })
+    return leaf
+}
 
 export const unloadView = async (workspace: Workspace, gate: GateFrameOption): Promise<void> => {
     workspace.detachLeavesOfType(gate.id)
@@ -428,7 +459,7 @@ export class GateView extends ItemView {
     private readonly options: GateFrameOption
     private frame!: WebviewTag | HTMLIFrameElement
     private readonly useIframe: boolean = false
-    private frameReadyCallbacks: Function[]
+    private frameReadyCallbacks: FrameReadyCallback[]
     private isFrameReady: boolean = false
     private frameDoc!: Document
 
@@ -453,7 +484,9 @@ export class GateView extends ItemView {
             if (this.frame instanceof HTMLIFrameElement) {
                 this.frame.src = this.options?.url ?? 'about:blank'
             } else {
-                this.frame.loadURL(this.options?.url ?? 'about:blank')
+                void this.frame.loadURL(this.options?.url ?? 'about:blank').catch((error) => {
+                    console.error('URLAutoFill: failed to load home page', error)
+                })
             }
         })
     }
@@ -467,7 +500,7 @@ export class GateView extends ItemView {
         this.addActions()
 
         this.contentEl.empty()
-        this.contentEl.addClass('url-autofill-view')
+        this.contentEl.addClass('urlautofill-view')
 
         window.setTimeout(() => {
             this.frameDoc = this.contentEl.doc
@@ -492,7 +525,7 @@ export class GateView extends ItemView {
         this.frameDoc = this.contentEl.doc
 
         if (this.useIframe) {
-            this.frame = createIframe(this.options, onReady)
+            this.frame = createIframe(this.options, onReady, this.frameDoc)
         } else {
             this.frame = createWebviewTag(this.options, onReady, this.frameDoc)
 
@@ -532,11 +565,13 @@ export class GateView extends ItemView {
         menu.addItem((item) => {
             item.setTitle('Home page')
             item.setIcon('home')
-            item.onClick(async () => {
+            item.onClick(() => {
                 if (this.frame instanceof HTMLIFrameElement) {
                     this.frame.src = this.options?.url ?? 'about:blank'
                 } else {
-                    await this.frame.loadURL(this.options?.url ?? 'about:blank')
+                    void this.frame.loadURL(this.options?.url ?? 'about:blank').catch((error) => {
+                        console.error('URLAutoFill: failed to load home page', error)
+                    })
                 }
             })
         })
@@ -599,7 +634,7 @@ export class GateView extends ItemView {
         return this.options?.icon ?? 'globe'
     }
 
-    onFrameReady(callback: Function) {
+    onFrameReady(callback: FrameReadyCallback) {
         if (this.isFrameReady) {
             callback()
         } else {
@@ -633,15 +668,21 @@ export const registerGate = (plugin: Plugin, options: GateFrameOption) => {
     }
 
     if (options.hasRibbon) {
-        plugin.addRibbonIcon(iconName, options.title, async () => {
-            await openView(plugin.app.workspace, options.id, options.position, options.openMode ?? 'tab')
+        plugin.addRibbonIcon(iconName, options.title, () => {
+            void openView(plugin.app.workspace, options.id, options.position, options.openMode ?? 'tab').catch((error) => {
+                console.error('URLAutoFill: failed to open view from ribbon', error)
+            })
         })
     }
 
     plugin.addCommand({
         id: `url-autofill-${btoa(options.url)}`,
         name: `Open ${options.title}`,
-        callback: async () => await openView(plugin.app.workspace, options.id, options.position, options.openMode ?? 'tab')
+        callback: () => {
+            void openView(plugin.app.workspace, options.id, options.position, options.openMode ?? 'tab').catch((error) => {
+                console.error('URLAutoFill: failed to open view from command', error)
+            })
+        }
     })
 }
 
@@ -653,12 +694,12 @@ export const createFormEditGate = (
 ) => {
     new Setting(contentEl)
         .setName('URL')
-        .setClass('url-autofill--form-field')
+        .setClass('urlautofill-form-field')
         .addText((text) =>
             text
                 .setPlaceholder('https://example.com')
                 .setValue(gateOptions.url)
-                .onChange(async (value) => {
+                .onChange((value) => {
                     gateOptions.url = value.trim()
                     gateOptions.loginUrl = value.trim()
                 })
@@ -666,102 +707,104 @@ export const createFormEditGate = (
 
     new Setting(contentEl)
         .setName('Name')
-        .setClass('url-autofill--form-field')
+        .setClass('urlautofill-form-field')
         .addText((text) =>
-            text.setValue(gateOptions.title).onChange(async (value) => {
+            text.setValue(gateOptions.title).onChange((value) => {
                 gateOptions.title = value
             })
         )
 
     new Setting(contentEl)
         .setName('Pin to menu')
-        .setClass('url-autofill--form-field')
+        .setClass('urlautofill-form-field')
         .setDesc('If enabled, the gate will be pinned to the left bar')
         .addToggle((text) =>
-            text.setValue(gateOptions.hasRibbon === true).onChange(async (value) => {
+            text.setValue(gateOptions.hasRibbon === true).onChange((value) => {
                 gateOptions.hasRibbon = value
             })
         )
     new Setting(contentEl)
-    .setName('Automatic sign-in')
-    .setClass('url-autofill--form-field')
-    .setDesc('If enabled, URLAutoFill will submit the username and password when the page opens.')
-    .addToggle((toggle) =>
-        toggle.setValue(gateOptions.autoSignIn === true).onChange(async (value) => {
-            gateOptions.autoSignIn = value
-        })
-    ) 
-    new Setting(contentEl)
-    .setName('Sign-in method')
-    .setClass('url-autofill--form-field')
-    .setDesc('Use GET if the website rejects POST with a 405 error.')
-    .addDropdown((dropdown) =>
-        dropdown
-            .addOption('GET', 'GET')
-            .addOption('POST', 'POST')
-            .setValue(gateOptions.autoSignInMethod ?? 'GET')
-            .onChange(async (value) => {
-                gateOptions.autoSignInMethod = value as GateAutoSignInMethod
+        .setName('Automatic sign-in')
+        .setClass('urlautofill-form-field')
+        .setDesc('If enabled, URLAutoFill will submit the username and password when the page opens.')
+        .addToggle((toggle) =>
+            toggle.setValue(gateOptions.autoSignIn === true).onChange((value) => {
+                gateOptions.autoSignIn = value
             })
-    )
+        )
+    new Setting(contentEl)
+        .setName('Sign-in method')
+        .setClass('urlautofill-form-field')
+        .setDesc('Use GET if the website rejects POST with a 405 error.')
+        .addDropdown((dropdown) =>
+            dropdown
+                .addOption('GET', 'GET')
+                .addOption('POST', 'POST')
+                .setValue(gateOptions.autoSignInMethod ?? 'GET')
+                .onChange((value) => {
+                    gateOptions.autoSignInMethod = value as GateAutoSignInMethod
+                })
+        )
 
     new Setting(contentEl)
         .setName('Open mode')
-        .setClass('url-autofill--form-field')
-        .setDesc('Choose whether the website opens in an Obsidian tab or in a separate Obsidian window.')
+        .setClass('urlautofill-form-field')
+        .setDesc('Choose whether the website opens in a tab or in a separate window.')
         .addDropdown((dropdown) =>
             dropdown
-                .addOption('tab', 'Obsidian tab')
-                .addOption('window', 'Obsidian window')
+                .addOption('tab', 'Tab')
+                .addOption('window', 'Window')
                 .setValue(gateOptions.openMode ?? 'tab')
-                .onChange(async (value) => {
+                .onChange((value) => {
                     gateOptions.openMode = value as 'tab' | 'window'
                 })
         )
     new Setting(contentEl)
         .setName('Username')
-        .setClass('url-autofill--form-field')
+        .setClass('urlautofill-form-field')
         .addText((text) =>
             text
                 .setPlaceholder('username or email')
                 .setValue(gateOptions.username ?? '')
-                .onChange(async (value) => {
+                .onChange((value) => {
                     gateOptions.username = value.trim()
                 })
         )
 
     new Setting(contentEl)
         .setName('Password')
-        .setClass('url-autofill--form-field')
+        .setClass('urlautofill-form-field')
         .addText((text) => {
             text.inputEl.type = 'password'
             text
                 .setPlaceholder('password')
                 .setValue(gateOptions.password ?? '')
-                .onChange(async (value) => {
+                .onChange((value) => {
                     gateOptions.password = value
                 })
         })
 
     const advancedFieldsToggle = contentEl.createDiv({
-        cls: 'url-autofill--advanced-fields-toggle'
+        cls: 'urlautofill-advanced-fields-toggle'
     })
 
     const advancedArrow = advancedFieldsToggle.createSpan({
-        cls: 'url-autofill--advanced-fields-arrow',
+        cls: 'urlautofill-advanced-fields-arrow',
         text: '⌄'
     })
 
     const advancedFieldsContainer = contentEl.createDiv({
-        cls: 'url-autofill--advanced-fields-container'
+        cls: 'urlautofill-advanced-fields-container'
     })
 
     advancedFieldsContainer.hide()
 
-    advancedFieldsToggle.addEventListener('click', () => {
-        const isHidden = advancedFieldsContainer.style.display === 'none'
+    let advancedFieldsOpen = false
 
-        if (isHidden) {
+    advancedFieldsToggle.addEventListener('click', () => {
+        advancedFieldsOpen = !advancedFieldsOpen
+
+        if (advancedFieldsOpen) {
             advancedFieldsContainer.show()
             advancedArrow.setText('⌃')
             advancedFieldsToggle.addClass('is-open')
@@ -774,26 +817,26 @@ export const createFormEditGate = (
 
     new Setting(advancedFieldsContainer)
         .setName('Username field name')
-        .setClass('url-autofill--form-field')
+        .setClass('urlautofill-form-field')
         .setDesc('Usually username, email, user, or login.')
         .addText((text) =>
             text
                 .setPlaceholder('username')
                 .setValue(gateOptions.usernameField ?? 'username')
-                .onChange(async (value) => {
+                .onChange((value) => {
                     gateOptions.usernameField = value.trim() || 'username'
                 })
         )
 
     new Setting(advancedFieldsContainer)
         .setName('Password field name')
-        .setClass('url-autofill--form-field')
+        .setClass('urlautofill-form-field')
         .setDesc('Usually password.')
         .addText((text) =>
             text
                 .setPlaceholder('password')
                 .setValue(gateOptions.passwordField ?? 'password')
-                .onChange(async (value) => {
+                .onChange((value) => {
                     gateOptions.passwordField = value.trim() || 'password'
                 })
         )
@@ -802,7 +845,7 @@ export const createFormEditGate = (
         btn
             .setButtonText(submitButtonText ?? (gateOptions.id ? 'Update passkey' : 'Create passkey'))
             .setCta()
-            .onClick(async () => {
+            .onClick(() => {
                 gateOptions = normalizeGateOption(gateOptions)
                 onSubmit?.(gateOptions)
             })
@@ -821,7 +864,7 @@ interface CodeBlockProcessorPlugin {
     ): void
 }
 
-function processNewSyntax(plugin: CodeBlockProcessorPlugin, sourceCode: string): Node {
+function processNewSyntax(plugin: CodeBlockProcessorPlugin, sourceCode: string, ownerDoc: Document): Node {
     const firstLineUrl = sourceCode.split('\n')[0]
     if (firstLineUrl.startsWith('http')) {
         sourceCode = sourceCode.replace(firstLineUrl, '').trim()
@@ -829,7 +872,7 @@ function processNewSyntax(plugin: CodeBlockProcessorPlugin, sourceCode: string):
     sourceCode = sourceCode.replace(/^\t+/gm, (match) => '  '.repeat(match.length))
 
     if (sourceCode.length === 0) {
-        return createFrame(createEmptyGateOption(), '800px')
+        return createFrame(createEmptyGateOption(), '800px', ownerDoc)
     }
 
     let data: Partial<CodeBlockOption> = {}
@@ -839,13 +882,17 @@ function processNewSyntax(plugin: CodeBlockProcessorPlugin, sourceCode: string):
     }
 
     try {
-        data = Object.assign(data, parse(sourceCode))
+        const parsed = parse(sourceCode)
+        if (!isRecord(parsed)) {
+            return createErrorMessage(undefined, ownerDoc)
+        }
+        data = Object.assign(data, parsed)
     } catch (error) {
-        return createErrorMessage(error as Error)
+        return createErrorMessage(error instanceof Error ? error : undefined, ownerDoc)
     }
 
-    if (typeof data !== 'object' || data === null || Object.keys(data).length === 0) {
-        return createErrorMessage()
+    if (Object.keys(data).length === 0) {
+        return createErrorMessage(undefined, ownerDoc)
     }
 
     let height = '800px'
@@ -866,21 +913,21 @@ function processNewSyntax(plugin: CodeBlockProcessorPlugin, sourceCode: string):
         data = Object.assign(prefill, data)
     }
 
-    return createFrame(normalizeGateOption(data), height)
+    return createFrame(normalizeGateOption(data), height, ownerDoc)
 }
 
-function createErrorMessage(error?: Error): Node {
-    const div = document.createElement('div')
+function createErrorMessage(error?: Error, ownerDoc: Document = activeDocument): Node {
+    const div = ownerDoc.createElement('div')
 
     const messageText = 'The syntax has been updated. Please use the YAML format.'
-    div.appendChild(document.createTextNode(messageText))
+    div.appendChild(ownerDoc.createTextNode(messageText))
 
     if (error) {
-        div.appendChild(document.createTextNode(`\nError details: ${error.message}`))
+        div.appendChild(ownerDoc.createTextNode(`\nError details: ${error.message}`))
     }
 
-    div.appendChild(document.createTextNode('\nRead more about YAML here.'))
-    const linkNode = document.createElement('a')
+    div.appendChild(ownerDoc.createTextNode('\nRead more about YAML here.'))
+    const linkNode = ownerDoc.createElement('a')
     linkNode.href = 'https://yaml.org/spec/1.2/spec.html'
     linkNode.textContent = 'YAML Syntax'
     div.appendChild(linkNode)
@@ -888,16 +935,16 @@ function createErrorMessage(error?: Error): Node {
     return div
 }
 
-function createFrame(options: GateFrameOption, height: string): HTMLIFrameElement | WebviewTag {
-    const frame = Platform.isMobileApp ? createIframe(options) : createWebviewTag(options)
-    frame.style.height = height
+function createFrame(options: GateFrameOption, height: string, ownerDoc: Document = activeDocument): HTMLIFrameElement | WebviewTag {
+    const frame = Platform.isMobileApp ? createIframe(options, undefined, ownerDoc) : createWebviewTag(options, undefined, ownerDoc)
+    frame.setCssProps({ height })
     return frame
 }
 
 export function registerCodeBlockProcessor(plugin: CodeBlockProcessorPlugin) {
     plugin.registerMarkdownCodeBlockProcessor('gate', (sourceCode, el, _ctx) => {
-        el.addClass('url-autofill-view')
-        const frame = processNewSyntax(plugin, sourceCode)
+        el.addClass('urlautofill-view')
+        const frame = processNewSyntax(plugin, sourceCode, el.ownerDocument)
         el.appendChild(frame)
     })
 }
@@ -933,7 +980,7 @@ const createLinkConvertMenu = (menu: Menu, editor: Editor) => {
 
     if (parsedLink.url.startsWith('obsidian://urlautofill') || parsedLink.url.startsWith('obsidian://opengate')) {
         menu.addItem((item) => {
-            item.setTitle('Convert to normal link').onClick(async () => {
+            item.setTitle('Convert to normal link').onClick(() => {
                 const urlMatch = parsedLink.url.match(/url=([^&]+)/)
                 if (!urlMatch) {
                     new Notice('Can not convert the pre-configured gate link to normal link.')
@@ -947,7 +994,7 @@ const createLinkConvertMenu = (menu: Menu, editor: Editor) => {
         })
     } else {
         menu.addItem((item) => {
-            item.setTitle('Convert to Gate Link').onClick(async () => {
+            item.setTitle('Convert to Gate Link').onClick(() => {
                 const gateLink = `[${parsedLink.title}](obsidian://urlautofill?title=${encodeURIComponent(parsedLink.title)}&url=${encodeURIComponent(parsedLink.url)})`
                 editor.replaceSelection(gateLink)
             })

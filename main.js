@@ -6092,10 +6092,18 @@ function parse(src, reviver, options) {
   return doc.toJS(Object.assign({ reviver: _reviver }, options));
 }
 
+// src/guards.ts
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function isString(value) {
+  return typeof value === "string";
+}
+
 // src/functions.ts
 var DEFAULT_URL = "about:blank";
 var GOOGLE_URL = "https://google.com";
-var URL_AUTOFILL_WEBVIEW_CLASS = "url-autofill-webview";
+var URL_AUTOFILL_WEBVIEW_CLASS = "urlautofill-webview";
 function getDefaultUserAgent() {
   return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 }
@@ -6109,22 +6117,23 @@ var hasAutoSignInConfig = (params) => {
 };
 var submitAutoSignInForm = (iframe, params) => {
   var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
-  const form = document.createElement("form");
+  const doc = iframe.ownerDocument;
+  const form = doc.createElement("form");
   form.method = (_a = params.autoSignInMethod) != null ? _a : "GET";
   form.action = (_c = (_b = params.loginUrl) == null ? void 0 : _b.trim()) != null ? _c : "";
   form.target = iframe.name;
-  form.style.display = "none";
-  const usernameInput = document.createElement("input");
+  form.addClass("urlautofill-hidden-form");
+  const usernameInput = doc.createElement("input");
   usernameInput.type = "hidden";
   usernameInput.name = (_e = (_d = params.usernameField) == null ? void 0 : _d.trim()) != null ? _e : "username";
   usernameInput.value = (_g = (_f = params.username) == null ? void 0 : _f.trim()) != null ? _g : "";
   form.appendChild(usernameInput);
-  const passwordInput = document.createElement("input");
+  const passwordInput = doc.createElement("input");
   passwordInput.type = "hidden";
   passwordInput.name = (_i = (_h = params.passwordField) == null ? void 0 : _h.trim()) != null ? _i : "password";
   passwordInput.value = (_j = params.password) != null ? _j : "";
   form.appendChild(passwordInput);
-  document.body.appendChild(form);
+  doc.body.appendChild(form);
   form.submit();
   form.remove();
 };
@@ -6138,7 +6147,9 @@ var createAutoSignInScript = (params) => {
   const password = JSON.stringify((_j = params.password) != null ? _j : "");
   return `
         (() => {
-            document.body.innerHTML = '';
+            while (document.body.firstChild) {
+                document.body.removeChild(document.body.firstChild);
+            }
             const form = document.createElement('form');
             form.method = ${method};
             form.action = ${loginUrl};
@@ -6159,6 +6170,27 @@ var createAutoSignInScript = (params) => {
             form.submit();
         })();
     `;
+};
+var injectIframeCss = (iframe, css) => {
+  const contentDocument = iframe.contentDocument;
+  if (!contentDocument) {
+    return;
+  }
+  const link = contentDocument.createElement("link");
+  link.rel = "stylesheet";
+  link.href = `data:text/css;charset=utf-8,${encodeURIComponent(css)}`;
+  contentDocument.head.appendChild(link);
+};
+var runIframeJs = (iframe, js) => {
+  const contentWindow = iframe.contentWindow;
+  if (!contentWindow) {
+    return;
+  }
+  try {
+    contentWindow.eval(js);
+  } catch (error) {
+    console.error("URLAutoFill: failed to run JS in iframe", error);
+  }
 };
 var createEmptyGateOption = () => {
   return {
@@ -6231,11 +6263,11 @@ var normalizeGateOption = (gate) => {
   }
   return gate;
 };
-var createIframe = (params, onReady) => {
+var createIframe = (params, onReady, parentDoc = activeDocument) => {
   var _a;
-  const iframe = document.createElement("iframe");
+  const iframe = parentDoc.createElement("iframe");
   const shouldAutoSignIn = hasAutoSignInConfig(params);
-  iframe.name = `url-autofill-frame-${Math.random().toString(36).slice(2)}`;
+  iframe.name = `urlautofill-frame-${Math.random().toString(36).slice(2)}`;
   iframe.setAttribute("allowpopups", "");
   if ("credentialless" in iframe) {
     iframe.setAttribute("credentialless", "true");
@@ -6243,32 +6275,27 @@ var createIframe = (params, onReady) => {
   iframe.setAttribute("src", shouldAutoSignIn ? "about:blank" : (_a = params.url) != null ? _a : "about:blank");
   iframe.setAttribute("sandbox", "allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts allow-top-navigation-by-user-activation");
   iframe.setAttribute("allow", "encrypted-media; fullscreen; oversized-images; picture-in-picture; sync-xhr; geolocation");
-  iframe.addClass("url-autofill-iframe");
+  iframe.addClass("urlautofill-iframe");
   let submittedAutoSignIn = false;
   iframe.addEventListener("load", () => {
-    var _a2, _b;
     if (shouldAutoSignIn && !submittedAutoSignIn) {
       submittedAutoSignIn = true;
       submitAutoSignInForm(iframe, params);
       return;
     }
-    onReady == null ? void 0 : onReady.call(null);
+    onReady == null ? void 0 : onReady();
     if (params == null ? void 0 : params.css) {
-      const style = document.createElement("style");
-      style.textContent = params.css;
-      (_a2 = iframe.contentDocument) == null ? void 0 : _a2.head.appendChild(style);
+      injectIframeCss(iframe, params.css);
     }
     if (params == null ? void 0 : params.js) {
-      const script = document.createElement("script");
-      script.textContent = params.js;
-      (_b = iframe.contentDocument) == null ? void 0 : _b.head.appendChild(script);
+      runIframeJs(iframe, params.js);
     }
   });
   return iframe;
 };
-var createWebviewTag = (params, onReady, parentDoc) => {
+var createWebviewTag = (params, onReady, parentDoc = activeDocument) => {
   var _a, _b;
-  const webviewTag = (parentDoc || document).createElement("webview");
+  const webviewTag = parentDoc.createElement("webview");
   const shouldAutoSignIn = hasAutoSignInConfig(params);
   let submittedAutoSignIn = false;
   webviewTag.setAttribute("partition", "persist:" + params.profileKey);
@@ -6276,15 +6303,17 @@ var createWebviewTag = (params, onReady, parentDoc) => {
   webviewTag.setAttribute("httpreferrer", (_b = params.url) != null ? _b : GOOGLE_URL);
   webviewTag.addClass(URL_AUTOFILL_WEBVIEW_CLASS);
   webviewTag.setAttribute("useragent", params.userAgent || getDefaultUserAgent());
-  webviewTag.addEventListener("new-window", async (event) => {
+  webviewTag.addEventListener("new-window", (event) => {
     const popupEvent = event;
     popupEvent.preventDefault();
     if (popupEvent.url) {
-      await webviewTag.loadURL(popupEvent.url);
+      void webviewTag.loadURL(popupEvent.url).catch((error) => {
+        console.error("URLAutoFill: failed to open popup URL in webview", error);
+      });
     }
   });
-  webviewTag.addEventListener("dom-ready", async () => {
-    await webviewTag.executeJavaScript(`
+  webviewTag.addEventListener("dom-ready", () => {
+    void webviewTag.executeJavaScript(`
             (() => {
                 if (window.__urlAutoFillPopupPatchInstalled) return;
                 window.__urlAutoFillPopupPatchInstalled = true;
@@ -6360,22 +6389,25 @@ var createWebviewTag = (params, onReady, parentDoc) => {
                     subtree: true
                 });
             })();
-        `);
-    if (shouldAutoSignIn && !submittedAutoSignIn) {
-      submittedAutoSignIn = true;
-      await webviewTag.executeJavaScript(createAutoSignInScript(params));
-      return;
-    }
-    if (params.zoomFactor) {
-      webviewTag.setZoomFactor(params.zoomFactor);
-    }
-    if (params == null ? void 0 : params.css) {
-      await webviewTag.insertCSS(params.css);
-    }
-    if (params == null ? void 0 : params.js) {
-      await webviewTag.executeJavaScript(params.js);
-    }
-    onReady == null ? void 0 : onReady.call(null);
+        `).then(async () => {
+      if (shouldAutoSignIn && !submittedAutoSignIn) {
+        submittedAutoSignIn = true;
+        await webviewTag.executeJavaScript(createAutoSignInScript(params));
+        return;
+      }
+      if (params.zoomFactor) {
+        webviewTag.setZoomFactor(params.zoomFactor);
+      }
+      if (params == null ? void 0 : params.css) {
+        await webviewTag.insertCSS(params.css);
+      }
+      if (params == null ? void 0 : params.js) {
+        await webviewTag.executeJavaScript(params.js);
+      }
+      onReady == null ? void 0 : onReady();
+    }).catch((error) => {
+      console.error("URLAutoFill: webview dom-ready handler failed", error);
+    });
   });
   return webviewTag;
 };
@@ -6444,7 +6476,9 @@ var GateView = class extends import_obsidian.ItemView {
       if (this.frame instanceof HTMLIFrameElement) {
         this.frame.src = (_b = (_a = this.options) == null ? void 0 : _a.url) != null ? _b : "about:blank";
       } else {
-        this.frame.loadURL((_d = (_c = this.options) == null ? void 0 : _c.url) != null ? _d : "about:blank");
+        void this.frame.loadURL((_d = (_c = this.options) == null ? void 0 : _c.url) != null ? _d : "about:blank").catch((error) => {
+          console.error("URLAutoFill: failed to load home page", error);
+        });
       }
     });
   }
@@ -6455,7 +6489,7 @@ var GateView = class extends import_obsidian.ItemView {
     super.onload();
     this.addActions();
     this.contentEl.empty();
-    this.contentEl.addClass("url-autofill-view");
+    this.contentEl.addClass("urlautofill-view");
     window.setTimeout(() => {
       this.frameDoc = this.contentEl.doc;
       this.createFrame();
@@ -6474,7 +6508,7 @@ var GateView = class extends import_obsidian.ItemView {
     };
     this.frameDoc = this.contentEl.doc;
     if (this.useIframe) {
-      this.frame = createIframe(this.options, onReady);
+      this.frame = createIframe(this.options, onReady, this.frameDoc);
     } else {
       this.frame = createWebviewTag(this.options, onReady, this.frameDoc);
       this.frame.addEventListener("destroyed", () => {
@@ -6511,12 +6545,14 @@ var GateView = class extends import_obsidian.ItemView {
     menu.addItem((item) => {
       item.setTitle("Home page");
       item.setIcon("home");
-      item.onClick(async () => {
+      item.onClick(() => {
         var _a, _b, _c, _d;
         if (this.frame instanceof HTMLIFrameElement) {
           this.frame.src = (_b = (_a = this.options) == null ? void 0 : _a.url) != null ? _b : "about:blank";
         } else {
-          await this.frame.loadURL((_d = (_c = this.options) == null ? void 0 : _c.url) != null ? _d : "about:blank");
+          void this.frame.loadURL((_d = (_c = this.options) == null ? void 0 : _c.url) != null ? _d : "about:blank").catch((error) => {
+            console.error("URLAutoFill: failed to load home page", error);
+          });
         }
       });
     });
@@ -6600,73 +6636,78 @@ var registerGate = (plugin, options) => {
     iconName = options.id;
   }
   if (options.hasRibbon) {
-    plugin.addRibbonIcon(iconName, options.title, async () => {
+    plugin.addRibbonIcon(iconName, options.title, () => {
       var _a;
-      await openView(plugin.app.workspace, options.id, options.position, (_a = options.openMode) != null ? _a : "tab");
+      void openView(plugin.app.workspace, options.id, options.position, (_a = options.openMode) != null ? _a : "tab").catch((error) => {
+        console.error("URLAutoFill: failed to open view from ribbon", error);
+      });
     });
   }
   plugin.addCommand({
     id: `url-autofill-${btoa(options.url)}`,
     name: `Open ${options.title}`,
-    callback: async () => {
+    callback: () => {
       var _a;
-      return await openView(plugin.app.workspace, options.id, options.position, (_a = options.openMode) != null ? _a : "tab");
+      void openView(plugin.app.workspace, options.id, options.position, (_a = options.openMode) != null ? _a : "tab").catch((error) => {
+        console.error("URLAutoFill: failed to open view from command", error);
+      });
     }
   });
 };
 var createFormEditGate = (contentEl, gateOptions, onSubmit, submitButtonText) => {
-  new import_obsidian.Setting(contentEl).setName("URL").setClass("url-autofill--form-field").addText((text) => text.setPlaceholder("https://example.com").setValue(gateOptions.url).onChange(async (value) => {
+  new import_obsidian.Setting(contentEl).setName("URL").setClass("urlautofill-form-field").addText((text) => text.setPlaceholder("https://example.com").setValue(gateOptions.url).onChange((value) => {
     gateOptions.url = value.trim();
     gateOptions.loginUrl = value.trim();
   }));
-  new import_obsidian.Setting(contentEl).setName("Name").setClass("url-autofill--form-field").addText((text) => text.setValue(gateOptions.title).onChange(async (value) => {
+  new import_obsidian.Setting(contentEl).setName("Name").setClass("urlautofill-form-field").addText((text) => text.setValue(gateOptions.title).onChange((value) => {
     gateOptions.title = value;
   }));
-  new import_obsidian.Setting(contentEl).setName("Pin to menu").setClass("url-autofill--form-field").setDesc("If enabled, the gate will be pinned to the left bar").addToggle((text) => text.setValue(gateOptions.hasRibbon === true).onChange(async (value) => {
+  new import_obsidian.Setting(contentEl).setName("Pin to menu").setClass("urlautofill-form-field").setDesc("If enabled, the gate will be pinned to the left bar").addToggle((text) => text.setValue(gateOptions.hasRibbon === true).onChange((value) => {
     gateOptions.hasRibbon = value;
   }));
-  new import_obsidian.Setting(contentEl).setName("Automatic sign-in").setClass("url-autofill--form-field").setDesc("If enabled, URLAutoFill will submit the username and password when the page opens.").addToggle((toggle) => toggle.setValue(gateOptions.autoSignIn === true).onChange(async (value) => {
+  new import_obsidian.Setting(contentEl).setName("Automatic sign-in").setClass("urlautofill-form-field").setDesc("If enabled, URLAutoFill will submit the username and password when the page opens.").addToggle((toggle) => toggle.setValue(gateOptions.autoSignIn === true).onChange((value) => {
     gateOptions.autoSignIn = value;
   }));
-  new import_obsidian.Setting(contentEl).setName("Sign-in method").setClass("url-autofill--form-field").setDesc("Use GET if the website rejects POST with a 405 error.").addDropdown((dropdown) => {
+  new import_obsidian.Setting(contentEl).setName("Sign-in method").setClass("urlautofill-form-field").setDesc("Use GET if the website rejects POST with a 405 error.").addDropdown((dropdown) => {
     var _a;
-    return dropdown.addOption("GET", "GET").addOption("POST", "POST").setValue((_a = gateOptions.autoSignInMethod) != null ? _a : "GET").onChange(async (value) => {
+    return dropdown.addOption("GET", "GET").addOption("POST", "POST").setValue((_a = gateOptions.autoSignInMethod) != null ? _a : "GET").onChange((value) => {
       gateOptions.autoSignInMethod = value;
     });
   });
-  new import_obsidian.Setting(contentEl).setName("Open mode").setClass("url-autofill--form-field").setDesc("Choose whether the website opens in an Obsidian tab or in a separate Obsidian window.").addDropdown((dropdown) => {
+  new import_obsidian.Setting(contentEl).setName("Open mode").setClass("urlautofill-form-field").setDesc("Choose whether the website opens in a tab or in a separate window.").addDropdown((dropdown) => {
     var _a;
-    return dropdown.addOption("tab", "Obsidian tab").addOption("window", "Obsidian window").setValue((_a = gateOptions.openMode) != null ? _a : "tab").onChange(async (value) => {
+    return dropdown.addOption("tab", "Tab").addOption("window", "Window").setValue((_a = gateOptions.openMode) != null ? _a : "tab").onChange((value) => {
       gateOptions.openMode = value;
     });
   });
-  new import_obsidian.Setting(contentEl).setName("Username").setClass("url-autofill--form-field").addText((text) => {
+  new import_obsidian.Setting(contentEl).setName("Username").setClass("urlautofill-form-field").addText((text) => {
     var _a;
-    return text.setPlaceholder("username or email").setValue((_a = gateOptions.username) != null ? _a : "").onChange(async (value) => {
+    return text.setPlaceholder("username or email").setValue((_a = gateOptions.username) != null ? _a : "").onChange((value) => {
       gateOptions.username = value.trim();
     });
   });
-  new import_obsidian.Setting(contentEl).setName("Password").setClass("url-autofill--form-field").addText((text) => {
+  new import_obsidian.Setting(contentEl).setName("Password").setClass("urlautofill-form-field").addText((text) => {
     var _a;
     text.inputEl.type = "password";
-    text.setPlaceholder("password").setValue((_a = gateOptions.password) != null ? _a : "").onChange(async (value) => {
+    text.setPlaceholder("password").setValue((_a = gateOptions.password) != null ? _a : "").onChange((value) => {
       gateOptions.password = value;
     });
   });
   const advancedFieldsToggle = contentEl.createDiv({
-    cls: "url-autofill--advanced-fields-toggle"
+    cls: "urlautofill-advanced-fields-toggle"
   });
   const advancedArrow = advancedFieldsToggle.createSpan({
-    cls: "url-autofill--advanced-fields-arrow",
+    cls: "urlautofill-advanced-fields-arrow",
     text: "\u2304"
   });
   const advancedFieldsContainer = contentEl.createDiv({
-    cls: "url-autofill--advanced-fields-container"
+    cls: "urlautofill-advanced-fields-container"
   });
   advancedFieldsContainer.hide();
+  let advancedFieldsOpen = false;
   advancedFieldsToggle.addEventListener("click", () => {
-    const isHidden = advancedFieldsContainer.style.display === "none";
-    if (isHidden) {
+    advancedFieldsOpen = !advancedFieldsOpen;
+    if (advancedFieldsOpen) {
       advancedFieldsContainer.show();
       advancedArrow.setText("\u2303");
       advancedFieldsToggle.addClass("is-open");
@@ -6676,43 +6717,47 @@ var createFormEditGate = (contentEl, gateOptions, onSubmit, submitButtonText) =>
       advancedFieldsToggle.removeClass("is-open");
     }
   });
-  new import_obsidian.Setting(advancedFieldsContainer).setName("Username field name").setClass("url-autofill--form-field").setDesc("Usually username, email, user, or login.").addText((text) => {
+  new import_obsidian.Setting(advancedFieldsContainer).setName("Username field name").setClass("urlautofill-form-field").setDesc("Usually username, email, user, or login.").addText((text) => {
     var _a;
-    return text.setPlaceholder("username").setValue((_a = gateOptions.usernameField) != null ? _a : "username").onChange(async (value) => {
+    return text.setPlaceholder("username").setValue((_a = gateOptions.usernameField) != null ? _a : "username").onChange((value) => {
       gateOptions.usernameField = value.trim() || "username";
     });
   });
-  new import_obsidian.Setting(advancedFieldsContainer).setName("Password field name").setClass("url-autofill--form-field").setDesc("Usually password.").addText((text) => {
+  new import_obsidian.Setting(advancedFieldsContainer).setName("Password field name").setClass("urlautofill-form-field").setDesc("Usually password.").addText((text) => {
     var _a;
-    return text.setPlaceholder("password").setValue((_a = gateOptions.passwordField) != null ? _a : "password").onChange(async (value) => {
+    return text.setPlaceholder("password").setValue((_a = gateOptions.passwordField) != null ? _a : "password").onChange((value) => {
       gateOptions.passwordField = value.trim() || "password";
     });
   });
-  new import_obsidian.Setting(contentEl).addButton((btn) => btn.setButtonText(submitButtonText != null ? submitButtonText : gateOptions.id ? "Update passkey" : "Create passkey").setCta().onClick(async () => {
+  new import_obsidian.Setting(contentEl).addButton((btn) => btn.setButtonText(submitButtonText != null ? submitButtonText : gateOptions.id ? "Update passkey" : "Create passkey").setCta().onClick(() => {
     gateOptions = normalizeGateOption(gateOptions);
     onSubmit == null ? void 0 : onSubmit(gateOptions);
   }));
 };
-function processNewSyntax(plugin, sourceCode) {
+function processNewSyntax(plugin, sourceCode, ownerDoc) {
   const firstLineUrl = sourceCode.split("\n")[0];
   if (firstLineUrl.startsWith("http")) {
     sourceCode = sourceCode.replace(firstLineUrl, "").trim();
   }
   sourceCode = sourceCode.replace(/^\t+/gm, (match) => "  ".repeat(match.length));
   if (sourceCode.length === 0) {
-    return createFrame(createEmptyGateOption(), "800px");
+    return createFrame(createEmptyGateOption(), "800px", ownerDoc);
   }
   let data = {};
   if (firstLineUrl.startsWith("http")) {
     data.url = firstLineUrl;
   }
   try {
-    data = Object.assign(data, parse(sourceCode));
+    const parsed = parse(sourceCode);
+    if (!isRecord(parsed)) {
+      return createErrorMessage(void 0, ownerDoc);
+    }
+    data = Object.assign(data, parsed);
   } catch (error) {
-    return createErrorMessage(error);
+    return createErrorMessage(error instanceof Error ? error : void 0, ownerDoc);
   }
-  if (typeof data !== "object" || data === null || Object.keys(data).length === 0) {
-    return createErrorMessage();
+  if (Object.keys(data).length === 0) {
+    return createErrorMessage(void 0, ownerDoc);
   }
   let height = "800px";
   if (data.height) {
@@ -6728,32 +6773,32 @@ function processNewSyntax(plugin, sourceCode) {
   if (prefill) {
     data = Object.assign(prefill, data);
   }
-  return createFrame(normalizeGateOption(data), height);
+  return createFrame(normalizeGateOption(data), height, ownerDoc);
 }
-function createErrorMessage(error) {
-  const div = document.createElement("div");
+function createErrorMessage(error, ownerDoc = activeDocument) {
+  const div = ownerDoc.createElement("div");
   const messageText = "The syntax has been updated. Please use the YAML format.";
-  div.appendChild(document.createTextNode(messageText));
+  div.appendChild(ownerDoc.createTextNode(messageText));
   if (error) {
-    div.appendChild(document.createTextNode(`
+    div.appendChild(ownerDoc.createTextNode(`
 Error details: ${error.message}`));
   }
-  div.appendChild(document.createTextNode("\nRead more about YAML here."));
-  const linkNode = document.createElement("a");
+  div.appendChild(ownerDoc.createTextNode("\nRead more about YAML here."));
+  const linkNode = ownerDoc.createElement("a");
   linkNode.href = "https://yaml.org/spec/1.2/spec.html";
   linkNode.textContent = "YAML Syntax";
   div.appendChild(linkNode);
   return div;
 }
-function createFrame(options, height) {
-  const frame = import_obsidian.Platform.isMobileApp ? createIframe(options) : createWebviewTag(options);
-  frame.style.height = height;
+function createFrame(options, height, ownerDoc = activeDocument) {
+  const frame = import_obsidian.Platform.isMobileApp ? createIframe(options, void 0, ownerDoc) : createWebviewTag(options, void 0, ownerDoc);
+  frame.setCssProps({ height });
   return frame;
 }
 function registerCodeBlockProcessor(plugin) {
   plugin.registerMarkdownCodeBlockProcessor("gate", (sourceCode, el, _ctx) => {
-    el.addClass("url-autofill-view");
-    const frame = processNewSyntax(plugin, sourceCode);
+    el.addClass("urlautofill-view");
+    const frame = processNewSyntax(plugin, sourceCode, el.ownerDocument);
     el.appendChild(frame);
   });
 }
@@ -6785,7 +6830,7 @@ var createLinkConvertMenu = (menu, editor) => {
     return;
   if (parsedLink.url.startsWith("obsidian://urlautofill") || parsedLink.url.startsWith("obsidian://opengate")) {
     menu.addItem((item) => {
-      item.setTitle("Convert to normal link").onClick(async () => {
+      item.setTitle("Convert to normal link").onClick(() => {
         const urlMatch = parsedLink.url.match(/url=([^&]+)/);
         if (!urlMatch) {
           new import_obsidian.Notice("Can not convert the pre-configured gate link to normal link.");
@@ -6798,7 +6843,7 @@ var createLinkConvertMenu = (menu, editor) => {
     });
   } else {
     menu.addItem((item) => {
-      item.setTitle("Convert to Gate Link").onClick(async () => {
+      item.setTitle("Convert to Gate Link").onClick(() => {
         const gateLink = `[${parsedLink.title}](obsidian://urlautofill?title=${encodeURIComponent(parsedLink.title)}&url=${encodeURIComponent(parsedLink.url)})`;
         editor.replaceSelection(gateLink);
       });
@@ -6808,6 +6853,12 @@ var createLinkConvertMenu = (menu, editor) => {
 
 // src/passkeys.ts
 var import_obsidian2 = require("obsidian");
+var appendSvgIcon = (container, iconMarkup) => {
+  const parsed = new DOMParser().parseFromString(iconMarkup, "image/svg+xml");
+  const svgNode = container.ownerDocument.importNode(parsed.documentElement, true);
+  svgNode.classList.add("svg-icon");
+  container.appendChild(svgNode);
+};
 var FirstPasskey = class extends import_obsidian2.Modal {
   constructor(app, gateOptions, onSubmit) {
     super(app);
@@ -6816,7 +6867,7 @@ var FirstPasskey = class extends import_obsidian2.Modal {
   }
   onOpen() {
     const { contentEl } = this;
-    this.modalEl.addClass("url-autofill--passkey-modal");
+    this.modalEl.addClass("urlautofill-passkey-modal");
     this.titleEl.setText("Welcome, Create your first passkey !");
     createFormEditGate(contentEl, this.gateOptions, (result) => {
       this.onSubmit(result);
@@ -6859,13 +6910,13 @@ var ModalInsertLink = class extends import_obsidian2.Modal {
   }
   createFormInsertLink() {
     let gateOptions = createEmptyGateOption();
-    new import_obsidian2.Setting(this.contentEl).setName("URL").setClass("url-autofill--form-field").addText((text) => text.setPlaceholder("https://example.com").onChange(async (value) => {
+    new import_obsidian2.Setting(this.contentEl).setName("URL").setClass("urlautofill-form-field").addText((text) => text.setPlaceholder("https://example.com").onChange((value) => {
       gateOptions.url = value;
     }));
-    new import_obsidian2.Setting(this.contentEl).setName("Title").setClass("url-autofill--form-field").addText((text) => text.onChange(async (value) => {
+    new import_obsidian2.Setting(this.contentEl).setName("Title").setClass("urlautofill-form-field").addText((text) => text.onChange((value) => {
       gateOptions.title = value;
     }));
-    new import_obsidian2.Setting(this.contentEl).addButton((btn) => btn.setButtonText("Insert Link").setCta().onClick(async () => {
+    new import_obsidian2.Setting(this.contentEl).addButton((btn) => btn.setButtonText("Insert Link").setCta().onClick(() => {
       gateOptions = normalizeGateOption(gateOptions);
       this.onSubmit(gateOptions);
     }));
@@ -6883,21 +6934,22 @@ var ModalListGates = class extends import_obsidian2.Modal {
     for (const gateId in this.gates) {
       const gate = this.gates[gateId];
       const container = contentEl.createEl("div", {
-        cls: "url-autofill--quick-list-item"
+        cls: "urlautofill-quick-list-item"
       });
       if (!gate.icon.startsWith("<svg")) {
         const iconSvg = (_a = (0, import_obsidian2.getIcon)(gate.icon)) != null ? _a : (0, import_obsidian2.getIcon)("link-external");
-        iconSvg.classList.add("svg-icon");
-        container.appendChild(iconSvg);
+        if (iconSvg) {
+          iconSvg.classList.add("svg-icon");
+          container.appendChild(iconSvg);
+        }
       } else {
-        const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        svgEl.classList.add("svg-icon");
-        svgEl.innerHTML = gate.icon;
-        container.appendChild(svgEl);
+        appendSvgIcon(container, gate.icon);
       }
       container.createEl("span", { text: gate.title });
-      container.addEventListener("click", async () => {
-        await openView(this.app.workspace, gate.id, gate.position);
+      container.addEventListener("click", () => {
+        void openView(this.app.workspace, gate.id, gate.position).catch((error) => {
+          console.error("URLAutoFill: failed to open passkey from list", error);
+        });
         this.close();
       });
     }
@@ -6906,8 +6958,8 @@ var ModalListGates = class extends import_obsidian2.Modal {
 var setupInsertLinkMenu = (plugin) => {
   plugin.registerEvent(plugin.app.workspace.on("editor-menu", (menu, editor) => {
     menu.addItem((item) => {
-      item.setTitle("Insert Gate Link").onClick(async () => {
-        const modal = new ModalInsertLink(plugin.app, async (gate) => {
+      item.setTitle("Insert Gate Link").onClick(() => {
+        const modal = new ModalInsertLink(plugin.app, (gate) => {
           const gateLink = `[${gate.title}](obsidian://urlautofill?title=${encodeURIComponent(gate.title)}&url=${encodeURIComponent(gate.url)})`;
           editor.replaceSelection(gateLink);
           modal.close();
@@ -6930,35 +6982,43 @@ var SettingTab = class extends import_obsidian3.PluginSettingTab {
   }
   async updateGate(gate) {
     await this.plugin.addGate(gate);
-    this.display();
+    this.update();
   }
-  display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.createEl("button", { text: "New passkey", cls: "mod-cta" }).addEventListener("click", () => {
-      new ModalEditGate(this.app, createEmptyGateOption(), this.updateGate.bind(this)).open();
-    });
-    containerEl.createEl("hr");
-    const settingContainerEl = containerEl.createDiv("setting-container");
-    for (const gateId in this.plugin.settings.gates) {
-      const gate = this.plugin.settings.gates[gateId];
-      const gateEl = settingContainerEl.createEl("div", {
-        attr: {
-          "data-gate-id": gate.id,
-          class: "url-autofill--setting--gate"
-        }
-      });
-      new import_obsidian3.Setting(gateEl).setName(gate.title).setDesc(gate.url).addButton((button) => {
-        button.setButtonText("Delete").onClick(async () => {
-          await this.plugin.removeGate(gateId);
-          gateEl.remove();
-        });
-      }).addButton((button) => {
-        button.setButtonText("Edit").onClick(() => {
-          new ModalEditGate(this.app, gate, this.updateGate.bind(this)).open();
-        });
-      });
-    }
+  getSettingDefinitions() {
+    const gates = Object.values(this.plugin.settings.gates);
+    return [
+      {
+        type: "list",
+        heading: "Passkeys",
+        emptyState: "No passkeys configured yet.",
+        addItem: {
+          name: "New passkey",
+          action: () => {
+            new ModalEditGate(this.app, createEmptyGateOption(), (updatedGate) => {
+              void this.updateGate(updatedGate);
+            }).open();
+          }
+        },
+        items: gates.map((gate) => ({
+          name: gate.title,
+          desc: gate.url,
+          render: (setting) => {
+            setting.settingEl.setAttribute("data-gate-id", gate.id);
+            setting.settingEl.addClass("urlautofill-setting-gate");
+            setting.addButton((button) => button.setButtonText("Edit").onClick(() => {
+              new ModalEditGate(this.app, gate, (updatedGate) => {
+                void this.updateGate(updatedGate);
+              }).open();
+            }));
+            setting.addButton((button) => button.setButtonText("Delete").onClick(() => {
+              void this.plugin.removeGate(gate.id).then(() => {
+                this.update();
+              });
+            }));
+          }
+        }))
+      }
+    ];
   }
 };
 var URLAutoFillPlugin = class extends import_obsidian3.Plugin {
@@ -6978,8 +7038,10 @@ var URLAutoFillPlugin = class extends import_obsidian3.Plugin {
       this.settings.uuid = this.generateUuid();
       await this.saveSettings();
       if (Object.keys(this.settings.gates).length === 0) {
-        new FirstPasskey(this.app, createEmptyGateOption(), async (gate) => {
-          await this.addGate(gate);
+        new FirstPasskey(this.app, createEmptyGateOption(), (gate) => {
+          void this.addGate(gate).catch((error) => {
+            console.error("URLAutoFill: failed to save first passkey", error);
+          });
         }).open();
       }
     }
@@ -7000,25 +7062,32 @@ var URLAutoFillPlugin = class extends import_obsidian3.Plugin {
     this.addCommand({
       id: `url-autofill-create-new`,
       name: `Create new site`,
-      callback: async () => {
-        new ModalEditGate(this.app, createEmptyGateOption(), async (gate) => {
-          await this.addGate(gate);
+      callback: () => {
+        new ModalEditGate(this.app, createEmptyGateOption(), (gate) => {
+          void this.addGate(gate).catch((error) => {
+            console.error("URLAutoFill: failed to create site", error);
+          });
         }).open();
       }
     });
     this.addCommand({
       id: `url-autofill-list-gates`,
       name: `List sites`,
-      hotkeys: [{ modifiers: ["Mod", "Shift"], key: "g" }],
-      callback: async () => {
-        new ModalListGates(this.app, this.settings.gates, async (gate) => {
-          await this.addGate(gate);
+      callback: () => {
+        new ModalListGates(this.app, this.settings.gates, (gate) => {
+          void this.addGate(gate).catch((error) => {
+            console.error("URLAutoFill: failed to add site from list", error);
+          });
         }).open();
       }
     });
   }
   registerProtocol() {
-    this.registerObsidianProtocolHandler("urlautofill", this.handleCustomProtocol.bind(this));
+    this.registerObsidianProtocolHandler("urlautofill", (data) => {
+      void this.handleCustomProtocol(data).catch((error) => {
+        console.error("URLAutoFill: protocol handler failed", error);
+      });
+    });
   }
   getGateOptionFromProtocolData(data) {
     const { title, url, id, position } = data;
@@ -7054,12 +7123,15 @@ var URLAutoFillPlugin = class extends import_obsidian3.Plugin {
     const gate = await openView(this.app.workspace, (targetGate == null ? void 0 : targetGate.id) || "temp-gate", targetGate == null ? void 0 : targetGate.position, (_a = targetGate == null ? void 0 : targetGate.openMode) != null ? _a : "tab");
     const gateView = gate.view;
     gateView == null ? void 0 : gateView.onFrameReady(() => {
-      gateView.setUrl(data.url);
+      var _a2, _b;
+      void gateView.setUrl((_b = (_a2 = data.url) != null ? _a2 : targetGate == null ? void 0 : targetGate.url) != null ? _b : "about:blank").catch((error) => {
+        console.error("URLAutoFill: failed to set URL from protocol handler", error);
+      });
     });
   }
   async addGate(gate) {
     const normalizedGate = normalizeGateOption(gate);
-    if (!this.settings.gates.hasOwnProperty(normalizedGate.id)) {
+    if (!Object.prototype.hasOwnProperty.call(this.settings.gates, normalizedGate.id)) {
       registerGate(this, normalizedGate);
     } else {
       new import_obsidian3.Notice("This change will take effect after you reload Obsidian.");
@@ -7079,16 +7151,23 @@ var URLAutoFillPlugin = class extends import_obsidian3.Plugin {
     new import_obsidian3.Notice("This change will take effect after you reload Obsidian.");
   }
   async loadSettings() {
-    this.settings = await this.loadData();
+    const loaded = await this.loadData();
+    const partial = isRecord(loaded) ? loaded : {};
     this.settings = {
-      ...DEFAULT_SETTINGS,
-      ...this.settings
+      uuid: isString(partial.uuid) ? partial.uuid : DEFAULT_SETTINGS.uuid,
+      gates: {}
     };
-    if (!this.settings.gates) {
-      this.settings.gates = {};
-    }
-    for (const gateId in this.settings.gates) {
-      this.settings.gates[gateId] = normalizeGateOption(this.settings.gates[gateId]);
+    if (isRecord(partial.gates)) {
+      for (const gateId in partial.gates) {
+        const gateValue = partial.gates[gateId];
+        if (isRecord(gateValue) && isString(gateValue.url)) {
+          try {
+            this.settings.gates[gateId] = normalizeGateOption(gateValue);
+          } catch (error) {
+            console.error(`URLAutoFill: skipped invalid passkey "${gateId}"`, error);
+          }
+        }
+      }
     }
   }
   async saveSettings() {

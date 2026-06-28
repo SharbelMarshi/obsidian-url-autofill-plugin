@@ -1,14 +1,18 @@
-.url-autofill-view {
-    padding: 0 !important;
-    overflow: hidden !important;
+.workspace-leaf-content .urlautofill-view {
+    padding: 0;
+    overflow: hidden;
 }
 
-.url-autofill-view .url-autofill-iframe,
-.url-autofill-view .url-autofill-webview {
+.workspace-leaf-content .urlautofill-view .urlautofill-iframe,
+.workspace-leaf-content .urlautofill-view .urlautofill-webview {
     width: 100%;
     height: 100%;
     border: none;
     background-color: #fff;
+}
+
+.urlautofill-hidden-form {
+    display: none;
 }
 
 .gate-header {
@@ -17,7 +21,7 @@
     align-items: center;
 }
 
-.url-autofill-mobile-warning {
+.urlautofill-mobile-warning {
     background: #b38c1d;
     padding: 5px 10px;
     border-radius: 5px;
@@ -26,29 +30,29 @@
     color: #fff;
 }
 
-.url-autofill-mobile-link {
+.urlautofill-mobile-link {
     color: #fff;
     text-decoration: underline;
 }
 
-.url-autofill--form-field--column .setting-item-control,
-.url-autofill--form-field--column .setting-item-control textarea,
-.url-autofill--form-field .setting-item-control input[type='text'] {
+.urlautofill-form-field-column .setting-item-control,
+.urlautofill-form-field-column .setting-item-control textarea,
+.urlautofill-form-field .setting-item-control input[type='text'] {
     width: 100%;
 }
 
-.url-autofill--form-field--column .setting-item-control textarea{
+.urlautofill-form-field-column .setting-item-control textarea {
     min-height: 80px;
 }
 
-.url-autofill--form-field--column {
+.urlautofill-form-field-column {
     display: flex;
     flex-direction: column;
     gap: 10px;
     align-items: flex-start;
 }
 
-.url-autofill--quick-list-item {
+.urlautofill-quick-list-item {
     padding: 10px;
     display: flex;
     justify-content: flex-start;
@@ -57,8 +61,8 @@
     cursor: pointer;
 }
 
-.url-autofill--quick-list-item.active,
-.url-autofill--quick-list-item:hover {
+.urlautofill-quick-list-item.active,
+.urlautofill-quick-list-item:hover {
     background: var(--background-modifier-hover);
 }
 
@@ -72,44 +76,46 @@ div[data-gate-id] .setting-item-name {
     text-overflow: ellipsis;
 }
 
-.url-autofill--setting--gate .setting-item-info {
+.urlautofill-setting-gate .setting-item-info {
     width: 100%;
     overflow: hidden;
 }
-.url-autofill--setting--gate .setting-item-description{
+
+.urlautofill-setting-gate .setting-item-description {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.url-autofill--passkey-modal .modal-title {
-    border-bottom: 1px solid var(--background-modifier-border) !important;
+
+.modal.urlautofill-passkey-modal .modal-title {
+    border-bottom: 1px solid var(--background-modifier-border);
     padding-bottom: 14px;
     margin-bottom: 18px;
 }
 
-.url-autofill--passkey-modal .modal-content {
-    border-top: 0 !important;
+.modal.urlautofill-passkey-modal .modal-content {
+    border-top: 0;
 }
 
-.url-autofill--passkey-modal .setting-item {
-    border: 0 !important;
-    box-shadow: none !important;
+.modal.urlautofill-passkey-modal .setting-item {
+    border: 0;
+    box-shadow: none;
     padding-top: 14px;
     padding-bottom: 14px;
 }
 
-.url-autofill--passkey-modal .setting-item::before,
-.url-autofill--passkey-modal .setting-item::after {
-    display: none !important;
-    content: none !important;
-    border: 0 !important;
+.modal.urlautofill-passkey-modal .setting-item::before,
+.modal.urlautofill-passkey-modal .setting-item::after {
+    display: none;
+    content: none;
+    border: 0;
 }
 
-.url-autofill--title-divider {
-    display: none !important;
+.modal.urlautofill-passkey-modal .urlautofill-title-divider {
+    display: none;
 }
 
-.url-autofill--advanced-fields-toggle {
+.urlautofill-advanced-fields-toggle {
     width: 100%;
     display: flex;
     justify-content: center;
@@ -118,12 +124,12 @@ div[data-gate-id] .setting-item-name {
     margin: 0;
     cursor: pointer;
     user-select: none;
-    border: 0 !important;
-    box-shadow: none !important;
+    border: 0;
+    box-shadow: none;
     text-align: center;
 }
 
-.url-autofill--advanced-fields-arrow {
+.urlautofill-advanced-fields-arrow {
     display: inline-block;
     width: auto;
     text-align: center;
@@ -133,10 +139,10 @@ div[data-gate-id] .setting-item-name {
     opacity: 0.75;
 }
 
-.url-autofill--advanced-fields-toggle:hover .url-autofill--advanced-fields-arrow {
+.urlautofill-advanced-fields-toggle:hover .urlautofill-advanced-fields-arrow {
     opacity: 1;
 }
 
-.url-autofill--advanced-fields-container {
+.urlautofill-advanced-fields-container {
     margin-top: 4px;
 }

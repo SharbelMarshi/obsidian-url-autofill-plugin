@@ -2,6 +2,13 @@ import { App, Editor, getIcon, Menu, Modal, Setting } from 'obsidian'
 import { createEmptyGateOption, createFormEditGate, normalizeGateOption, openView } from './functions'
 import { GateFrameOption } from './types'
 
+const appendSvgIcon = (container: HTMLElement, iconMarkup: string) => {
+    const parsed = new DOMParser().parseFromString(iconMarkup, 'image/svg+xml')
+    const svgNode = container.ownerDocument.importNode(parsed.documentElement, true)
+    svgNode.classList.add('svg-icon')
+    container.appendChild(svgNode)
+}
+
 export class FirstPasskey extends Modal {
     gateOptions: GateFrameOption
     onSubmit: (result: GateFrameOption) => void
@@ -15,7 +22,7 @@ export class FirstPasskey extends Modal {
     onOpen() {
         const { contentEl } = this
 
-        this.modalEl.addClass('url-autofill--passkey-modal')
+        this.modalEl.addClass('urlautofill-passkey-modal')
         this.titleEl.setText('Welcome, Create your first passkey !')
 
         createFormEditGate(contentEl, this.gateOptions, (result) => {
@@ -73,18 +80,18 @@ export class ModalInsertLink extends Modal {
         let gateOptions = createEmptyGateOption()
         new Setting(this.contentEl)
             .setName('URL')
-            .setClass('url-autofill--form-field')
+            .setClass('urlautofill-form-field')
             .addText((text) =>
-                text.setPlaceholder('https://example.com').onChange(async (value) => {
+                text.setPlaceholder('https://example.com').onChange((value) => {
                     gateOptions.url = value
                 })
             )
 
         new Setting(this.contentEl)
             .setName('Title')
-            .setClass('url-autofill--form-field')
+            .setClass('urlautofill-form-field')
             .addText((text) =>
-                text.onChange(async (value) => {
+                text.onChange((value) => {
                     gateOptions.title = value
                 })
             )
@@ -93,7 +100,7 @@ export class ModalInsertLink extends Modal {
             btn
                 .setButtonText('Insert Link')
                 .setCta()
-                .onClick(async () => {
+                .onClick(() => {
                     gateOptions = normalizeGateOption(gateOptions)
                     this.onSubmit(gateOptions)
                 })
@@ -117,24 +124,25 @@ export class ModalListGates extends Modal {
         for (const gateId in this.gates) {
             const gate = this.gates[gateId]
             const container = contentEl.createEl('div', {
-                cls: 'url-autofill--quick-list-item'
+                cls: 'urlautofill-quick-list-item'
             })
 
             if (!gate.icon.startsWith('<svg')) {
-                const iconSvg = getIcon(gate.icon) ?? getIcon('link-external')!
-                iconSvg.classList.add('svg-icon')
-                container.appendChild(iconSvg)
+                const iconSvg = getIcon(gate.icon) ?? getIcon('link-external')
+                if (iconSvg) {
+                    iconSvg.classList.add('svg-icon')
+                    container.appendChild(iconSvg)
+                }
             } else {
-                const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-                svgEl.classList.add('svg-icon')
-                svgEl.innerHTML = gate.icon
-                container.appendChild(svgEl)
+                appendSvgIcon(container, gate.icon)
             }
 
             container.createEl('span', { text: gate.title })
 
-            container.addEventListener('click', async () => {
-                await openView(this.app.workspace, gate.id, gate.position)
+            container.addEventListener('click', () => {
+                void openView(this.app.workspace, gate.id, gate.position).catch((error) => {
+                    console.error('URLAutoFill: failed to open passkey from list', error)
+                })
                 this.close()
             })
         }
@@ -145,8 +153,8 @@ export const setupInsertLinkMenu = (plugin: { app: App; registerEvent: (event: u
     plugin.registerEvent(
         plugin.app.workspace.on('editor-menu', (menu: Menu, editor: Editor) => {
             menu.addItem((item) => {
-                item.setTitle('Insert Gate Link').onClick(async () => {
-                    const modal = new ModalInsertLink(plugin.app, async (gate: GateFrameOption) => {
+                item.setTitle('Insert Gate Link').onClick(() => {
+                    const modal = new ModalInsertLink(plugin.app, (gate: GateFrameOption) => {
                         const gateLink = `[${gate.title}](obsidian://urlautofill?title=${encodeURIComponent(gate.title)}&url=${encodeURIComponent(gate.url)})`
                         editor.replaceSelection(gateLink)
                         modal.close()

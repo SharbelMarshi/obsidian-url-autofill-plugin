@@ -1,4 +1,4 @@
-import { App, Notice, ObsidianProtocolData, Plugin, PluginSettingTab, Setting } from 'obsidian'
+import { App, Notice, ObsidianProtocolData, Plugin, PluginSettingTab, Setting, SettingDefinitionItem } from 'obsidian'
 import {
     createEmptyGateOption,
     GateView,
@@ -9,6 +9,7 @@ import {
     setupLinkConvertMenu,
     unloadView
 } from './functions'
+import { isRecord, isString } from './guards'
 import { FirstPasskey, ModalEditGate, ModalListGates, setupInsertLinkMenu } from './passkeys'
 import { GateFrameOption, GateFrameOptionType, PluginSetting } from './types'
 
@@ -27,45 +28,49 @@ class SettingTab extends PluginSettingTab {
 
     async updateGate(gate: GateFrameOption) {
         await this.plugin.addGate(gate)
-        this.display()
+        this.update()
     }
 
-    display(): void {
-        const { containerEl } = this
-        containerEl.empty()
+    getSettingDefinitions(): SettingDefinitionItem[] {
+        const gates = Object.values(this.plugin.settings.gates)
 
-        containerEl.createEl('button', { text: 'New passkey', cls: 'mod-cta' }).addEventListener('click', () => {
-            new ModalEditGate(this.app, createEmptyGateOption(), this.updateGate.bind(this)).open()
-        })
-
-        containerEl.createEl('hr')
-
-        const settingContainerEl = containerEl.createDiv('setting-container')
-
-        for (const gateId in this.plugin.settings.gates) {
-            const gate = this.plugin.settings.gates[gateId]
-            const gateEl = settingContainerEl.createEl('div', {
-                attr: {
-                    'data-gate-id': gate.id,
-                    class: 'url-autofill--setting--gate'
-                }
-            })
-
-            new Setting(gateEl)
-                .setName(gate.title)
-                .setDesc(gate.url)
-                .addButton((button) => {
-                    button.setButtonText('Delete').onClick(async () => {
-                        await this.plugin.removeGate(gateId)
-                        gateEl.remove()
-                    })
-                })
-                .addButton((button) => {
-                    button.setButtonText('Edit').onClick(() => {
-                        new ModalEditGate(this.app, gate, this.updateGate.bind(this)).open()
-                    })
-                })
-        }
+        return [
+            {
+                type: 'list',
+                heading: 'Passkeys',
+                emptyState: 'No passkeys configured yet.',
+                addItem: {
+                    name: 'New passkey',
+                    action: () => {
+                        new ModalEditGate(this.app, createEmptyGateOption(), (updatedGate) => {
+                            void this.updateGate(updatedGate)
+                        }).open()
+                    }
+                },
+                items: gates.map((gate) => ({
+                    name: gate.title,
+                    desc: gate.url,
+                    render: (setting: Setting) => {
+                        setting.settingEl.setAttribute('data-gate-id', gate.id)
+                        setting.settingEl.addClass('urlautofill-setting-gate')
+                        setting.addButton((button) =>
+                            button.setButtonText('Edit').onClick(() => {
+                                new ModalEditGate(this.app, gate, (updatedGate) => {
+                                    void this.updateGate(updatedGate)
+                                }).open()
+                            })
+                        )
+                        setting.addButton((button) =>
+                            button.setButtonText('Delete').onClick(() => {
+                                void this.plugin.removeGate(gate.id).then(() => {
+                                    this.update()
+                                })
+                            })
+                        )
+                    }
+                }))
+            }
+        ]
     }
 }
 
@@ -90,8 +95,10 @@ export default class URLAutoFillPlugin extends Plugin {
             await this.saveSettings()
 
             if (Object.keys(this.settings.gates).length === 0) {
-                new FirstPasskey(this.app, createEmptyGateOption(), async (gate: GateFrameOption) => {
-                    await this.addGate(gate)
+                new FirstPasskey(this.app, createEmptyGateOption(), (gate: GateFrameOption) => {
+                    void this.addGate(gate).catch((error) => {
+                        console.error('URLAutoFill: failed to save first passkey', error)
+                    })
                 }).open()
             }
         }
@@ -118,9 +125,11 @@ export default class URLAutoFillPlugin extends Plugin {
         this.addCommand({
             id: `url-autofill-create-new`,
             name: `Create new site`,
-            callback: async () => {
-                new ModalEditGate(this.app, createEmptyGateOption(), async (gate: GateFrameOption) => {
-                    await this.addGate(gate)
+            callback: () => {
+                new ModalEditGate(this.app, createEmptyGateOption(), (gate: GateFrameOption) => {
+                    void this.addGate(gate).catch((error) => {
+                        console.error('URLAutoFill: failed to create site', error)
+                    })
                 }).open()
             }
         })
@@ -128,17 +137,22 @@ export default class URLAutoFillPlugin extends Plugin {
         this.addCommand({
             id: `url-autofill-list-gates`,
             name: `List sites`,
-            hotkeys: [{ modifiers: ['Mod', 'Shift'], key: 'g' }],
-            callback: async () => {
-                new ModalListGates(this.app, this.settings.gates, async (gate: GateFrameOption) => {
-                    await this.addGate(gate)
+            callback: () => {
+                new ModalListGates(this.app, this.settings.gates, (gate: GateFrameOption) => {
+                    void this.addGate(gate).catch((error) => {
+                        console.error('URLAutoFill: failed to add site from list', error)
+                    })
                 }).open()
             }
         })
     }
 
     private registerProtocol() {
-        this.registerObsidianProtocolHandler('urlautofill', this.handleCustomProtocol.bind(this))
+        this.registerObsidianProtocolHandler('urlautofill', (data) => {
+            void this.handleCustomProtocol(data).catch((error) => {
+                console.error('URLAutoFill: protocol handler failed', error)
+            })
+        })
     }
 
     getGateOptionFromProtocolData(data: ObsidianProtocolData): GateFrameOption | undefined {
@@ -190,14 +204,16 @@ export default class URLAutoFillPlugin extends Plugin {
         )
         const gateView = gate.view as GateView
         gateView?.onFrameReady(() => {
-            gateView.setUrl(data.url)
+            void gateView.setUrl(data.url ?? targetGate?.url ?? 'about:blank').catch((error) => {
+                console.error('URLAutoFill: failed to set URL from protocol handler', error)
+            })
         })
     }
 
     async addGate(gate: GateFrameOption) {
         const normalizedGate = normalizeGateOption(gate)
 
-        if (!this.settings.gates.hasOwnProperty(normalizedGate.id)) {
+        if (!Object.prototype.hasOwnProperty.call(this.settings.gates, normalizedGate.id)) {
             registerGate(this, normalizedGate)
         } else {
             new Notice('This change will take effect after you reload Obsidian.')
@@ -223,18 +239,25 @@ export default class URLAutoFillPlugin extends Plugin {
     }
 
     async loadSettings() {
-        this.settings = await this.loadData()
+        const loaded: unknown = await this.loadData()
+        const partial = isRecord(loaded) ? loaded : {}
+
         this.settings = {
-            ...DEFAULT_SETTINGS,
-            ...this.settings
+            uuid: isString(partial.uuid) ? partial.uuid : DEFAULT_SETTINGS.uuid,
+            gates: {}
         }
 
-        if (!this.settings.gates) {
-            this.settings.gates = {}
-        }
-
-        for (const gateId in this.settings.gates) {
-            this.settings.gates[gateId] = normalizeGateOption(this.settings.gates[gateId])
+        if (isRecord(partial.gates)) {
+            for (const gateId in partial.gates) {
+                const gateValue = partial.gates[gateId]
+                if (isRecord(gateValue) && isString(gateValue.url)) {
+                    try {
+                        this.settings.gates[gateId] = normalizeGateOption(gateValue as Partial<GateFrameOption>)
+                    } catch (error) {
+                        console.error(`URLAutoFill: skipped invalid passkey "${gateId}"`, error)
+                    }
+                }
+            }
         }
     }
 

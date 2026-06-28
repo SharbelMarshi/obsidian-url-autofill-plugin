@@ -1,7 +1,10 @@
 {
 	"id": "URLAutoFill",
 	"name": "URLAutoFill",
+	"minAppVersion": "1.5.0",
 	"version": "0.1.0",
 	"description": "Embed websites in Obsidian and automatically fill URLs and login credentials when you open them.",
-	"author": "Sharbel Marshi"
+	"author": "Sharbel Marshi",
+	"authorUrl": "",
+	"isDesktopOnly": true
 }

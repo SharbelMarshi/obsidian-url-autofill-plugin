@@ -1,6 +1,6 @@
 {
   "name": "extended-browser",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Fill configured URL login fields from local passkey profiles.",
   "main": "main.js",
   "scripts": {

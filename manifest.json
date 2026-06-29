@@ -2,7 +2,7 @@
 	"id": "urlautofill",
 	"name": "Extended Browser",
 	"minAppVersion": "1.13.0",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"description": "Embed websites and open them from local passkey profiles.",
 	"author": "Sharbel Marshi",
 	"authorUrl": "",

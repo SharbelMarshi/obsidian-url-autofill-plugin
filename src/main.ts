@@ -10,7 +10,7 @@ import {
     setupLinkConvertMenu,
     unloadView
 } from './functions'
-import { isRecord, isString } from './guards'
+import { isPartialGateOption, isRecord, isString } from './guards'
 import { FirstPasskey, ModalEditGate, ModalListGates, setupInsertLinkMenu } from './passkeys'
 import { GateFrameOption, GateFrameOptionType, PluginSetting } from './types'
 
@@ -33,52 +33,7 @@ class SettingTab extends PluginSettingTab {
     }
 
     private refreshTab(): void {
-        const tab = this as PluginSettingTab & { update?: () => void }
-        if (typeof tab.update === 'function') {
-            tab.update()
-        } else {
-            this.display()
-        }
-    }
-
-    display(): void {
-        const { containerEl } = this
-        containerEl.empty()
-
-        containerEl.createEl('button', { text: 'New passkey', cls: 'mod-cta' }).addEventListener('click', () => {
-            new ModalEditGate(this.app, createEmptyGateOption(), (updatedGate) => {
-                void this.updateGate(updatedGate)
-            }).open()
-        })
-
-        containerEl.createEl('hr')
-
-        const settingContainerEl = containerEl.createDiv('setting-container')
-
-        for (const gate of Object.values(this.plugin.settings.gates)) {
-            const gateEl = settingContainerEl.createDiv({
-                attr: { 'data-gate-id': gate.id },
-                cls: 'extended-browser-setting-gate'
-            })
-
-            new Setting(gateEl)
-                .setName(gate.title)
-                .setDesc(gate.url)
-                .addButton((button) => {
-                    button.setButtonText('Edit').onClick(() => {
-                        new ModalEditGate(this.app, gate, (updatedGate) => {
-                            void this.updateGate(updatedGate)
-                        }).open()
-                    })
-                })
-                .addButton((button) => {
-                    button.setButtonText('Delete').onClick(() => {
-                        void this.plugin.removeGate(gate.id).then(() => {
-                            this.refreshTab()
-                        })
-                    })
-                })
-        }
+        this.update()
     }
 
     getSettingDefinitions(): SettingDefinitionItem[] {
@@ -185,8 +140,8 @@ export default class ExtendedBrowserPlugin extends Plugin {
     }
 
     private findTargetGateView(): GateView | null {
-        const activeView = this.app.workspace.activeLeaf?.view
-        if (activeView instanceof GateView) {
+        const activeView = this.app.workspace.getActiveViewOfType(GateView)
+        if (activeView) {
             return activeView
         }
 
@@ -448,9 +403,9 @@ export default class ExtendedBrowserPlugin extends Plugin {
         if (isRecord(partial.gates)) {
             for (const gateId in partial.gates) {
                 const gateValue = partial.gates[gateId]
-                if (isRecord(gateValue) && isString(gateValue.url)) {
+                if (isPartialGateOption(gateValue)) {
                     try {
-                        this.settings.gates[gateId] = normalizeGateOption(gateValue as Partial<GateFrameOption>)
+                        this.settings.gates[gateId] = normalizeGateOption(gateValue)
                     } catch (error) {
                         console.error(`Extended Browser: skipped invalid passkey "${gateId}"`, error)
                     }

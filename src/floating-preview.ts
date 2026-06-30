@@ -113,7 +113,7 @@ export class FloatingPreviewManager {
             this.frameHostEl.empty()
             const layout = this.getFrameLayout()
             resizeFloatingFrame(frame, layout.width, layout.height)
-            this.frameHostEl.appendChild(frame as unknown as HTMLElement)
+            this.frameHostEl.appendChild(frame)
         }
 
         this.applyPanelSize()
@@ -584,8 +584,8 @@ export class FloatingPreviewManager {
             }
 
             this.setFrame(iframe)
-            applyFloatingFrameLayout(this.frame as unknown as HTMLElement, layout.width, layout.height)
-            this.frameHostEl.appendChild(this.frame as unknown as HTMLElement)
+            applyFloatingFrameLayout(iframe, layout.width, layout.height)
+            this.frameHostEl.appendChild(iframe)
             this.applyPanelSize()
             return
         }
@@ -606,7 +606,7 @@ export class FloatingPreviewManager {
         }
 
         this.setFrame(webview)
-        this.frameHostEl.appendChild(webview as unknown as HTMLElement)
+        this.frameHostEl.appendChild(webview)
         startWebviewNavigation(webview, gate)
         this.applyPanelSize()
     }

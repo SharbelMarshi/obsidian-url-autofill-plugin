@@ -349,7 +349,7 @@ export const applyFloatingFrameLayout = (frameEl: HTMLElement, width: number, he
 }
 
 export const resizeFloatingFrame = (frame: WebviewTag | HTMLIFrameElement, width: number, height: number): void => {
-    applyFloatingFrameLayout(frame as unknown as HTMLElement, width, height)
+    applyFloatingFrameLayout(frame, width, height)
 
     if (!(frame instanceof HTMLIFrameElement)) {
         applyWebviewLayout(frame, { width, height })
@@ -384,7 +384,7 @@ export const createWebviewTag = (
     parentDoc: Document = activeDocument,
     layout?: WebviewLayoutOptions
 ): WebviewTag => {
-    const webviewTag = parentDoc.createElement('webview') as unknown as WebviewTag
+    const webviewTag = parentDoc.createElement('webview')
     const shouldAutoSignIn = hasAutoSignInConfig(params)
     let submittedAutoSignIn = false
     const profileKey = params.profileKey ?? 'extended-browser'
@@ -746,7 +746,7 @@ export class GateView extends ItemView {
             return
         }
 
-        const frameEl = this.frame as unknown as HTMLElement | undefined
+        const frameEl = this.frame
         if (!frameEl || !this.contentEl.contains(frameEl)) {
             this.createFrame()
         }
@@ -757,10 +757,10 @@ export class GateView extends ItemView {
         this.isFrameBorrowed = false
         this.isFrameReady = true
         this.frameDoc = this.contentEl.doc
-        applyTabFrameLayout(frame as unknown as HTMLElement)
+        applyTabFrameLayout(frame)
 
-        if (!this.contentEl.contains(frame as unknown as HTMLElement)) {
-            this.contentEl.appendChild(frame as unknown as HTMLElement)
+        if (!this.contentEl.contains(frame)) {
+            this.contentEl.appendChild(frame)
         }
 
         if (!this.useIframe && !(frame instanceof HTMLIFrameElement)) {
@@ -807,7 +807,7 @@ export class GateView extends ItemView {
         }
 
         if (this.frame) {
-            this.contentEl.appendChild(this.frame as unknown as HTMLElement)
+            this.contentEl.appendChild(this.frame)
         }
     }
 
@@ -841,8 +841,8 @@ export class GateView extends ItemView {
         }
 
         this.isFrameBorrowed = false
-        applyTabFrameLayout(this.frame as unknown as HTMLElement)
-        this.contentEl.appendChild(this.frame as unknown as HTMLElement)
+        applyTabFrameLayout(this.frame)
+        this.contentEl.appendChild(this.frame)
     }
 
     onPaneMenu(menu: Menu, source: string): void {
@@ -1311,12 +1311,12 @@ function createFrame(options: GateFrameOption, height: string, ownerDoc: Documen
     if (Platform.isMobileApp) {
         const frame = createIframe(options, undefined, ownerDoc)
         frame.setCssProps({ height })
-        return frame as unknown as HTMLElement
+        return frame
     }
 
     const frame = createWebviewTag(options, undefined, ownerDoc)
     frame.setCssProps({ height })
-    return frame as unknown as HTMLElement
+    return frame
 }
 
 export function registerCodeBlockProcessor(plugin: CodeBlockProcessorPlugin) {

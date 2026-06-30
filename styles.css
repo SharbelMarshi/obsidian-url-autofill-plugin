@@ -274,9 +274,9 @@ div[data-gate-id] .setting-item-name {
     border-radius: var(--extended-browser-floating-radius);
 }
 
-.extended-browser-floating-preview-content .extended-browser-iframe,
-.extended-browser-floating-preview-content .extended-browser-webview {
-    display: inline-flex !important;
+.extended-browser-floating-preview-content .extended-browser-floating-frame.extended-browser-iframe,
+.extended-browser-floating-preview-content .extended-browser-floating-frame.extended-browser-webview {
+    display: inline-flex;
     border: none;
     background-color: #fff;
     flex: none;

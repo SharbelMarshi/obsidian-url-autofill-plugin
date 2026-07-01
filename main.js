@@ -6558,6 +6558,14 @@ var createWebviewTag = (params, onReady, parentDoc = activeDocument, layout) => 
   });
   return webviewTag;
 };
+var revealLeafCompat = async (workspace, leaf) => {
+  const revealLeaf = workspace.revealLeaf;
+  if (typeof revealLeaf === "function") {
+    await revealLeaf.call(workspace, leaf);
+    return;
+  }
+  workspace.setActiveLeaf(leaf, false, true);
+};
 var openView = async (workspace, id, position, openMode = "tab", context) => {
   if (openMode === "floating") {
     const gate = context == null ? void 0 : context.gate;
@@ -6582,16 +6590,16 @@ var openView = async (workspace, id, position, openMode = "tab", context) => {
         leaf2.detach();
       } else {
         leaf2.view.ensureFrame();
-        await workspace.revealLeaf(leaf2);
+        await revealLeafCompat(workspace, leaf2);
         return leaf2;
       }
     } else {
-      await workspace.revealLeaf(leaf2);
+      await revealLeafCompat(workspace, leaf2);
       return leaf2;
     }
   }
   const leaf = await createView(workspace, id, position, openMode);
-  await workspace.revealLeaf(leaf);
+  await revealLeafCompat(workspace, leaf);
   return leaf;
 };
 var createView = async (workspace, id, position, openMode = "tab") => {

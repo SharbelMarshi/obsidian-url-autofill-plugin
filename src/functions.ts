@@ -535,6 +535,17 @@ export const createWebviewTag = (
     return webviewTag
 }
 
+const revealLeafCompat = async (workspace: Workspace, leaf: WorkspaceLeaf): Promise<void> => {
+    const revealLeaf = (workspace as Workspace & { revealLeaf?: (leaf: WorkspaceLeaf) => Promise<void> }).revealLeaf
+
+    if (typeof revealLeaf === 'function') {
+        await revealLeaf.call(workspace, leaf)
+        return
+    }
+
+    workspace.setActiveLeaf(leaf, false, true)
+}
+
 export const openView = async (
     workspace: Workspace,
     id: string,
@@ -574,17 +585,17 @@ export const openView = async (
                 leaf.detach()
             } else {
                 leaf.view.ensureFrame()
-                await workspace.revealLeaf(leaf)
+                await revealLeafCompat(workspace, leaf)
                 return leaf
             }
         } else {
-            await workspace.revealLeaf(leaf)
+            await revealLeafCompat(workspace, leaf)
             return leaf
         }
     }
 
     const leaf = await createView(workspace, id, position, openMode)
-    await workspace.revealLeaf(leaf)
+    await revealLeafCompat(workspace, leaf)
     return leaf
 }
 

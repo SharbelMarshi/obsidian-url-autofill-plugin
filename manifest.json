@@ -2,8 +2,8 @@
 	"id": "urlautofill",
 	"name": "Extended Browser",
 	"minAppVersion": "1.5.0",
-	"version": "0.1.9",
-	"description": "Embed saved websites inside Obsidian and open them in a tab, sidebar, or floating window. Supports configured URL/login fields, optional automatic sign-in, and quick opening from notes, the ribbon, or commands.",
+	"version": "0.2.0",
+	"description": "Embed saved websites and open them in a tab, sidebar, or floating window. Supports configured URL/login fields, optional automatic sign-in, and quick opening from notes, the ribbon, or commands.",
 	"author": "Sharbel Marshi",
 	"authorUrl": "",
 	"isDesktopOnly": true

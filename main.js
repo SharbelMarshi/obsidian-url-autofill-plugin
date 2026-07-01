@@ -6102,6 +6102,9 @@ function isRecord(value) {
 function isString(value) {
   return typeof value === "string";
 }
+function isPartialGateOption(value) {
+  return isRecord(value) && isString(value.url);
+}
 
 // src/webview-session.ts
 var import_electron = require("electron");
@@ -7644,8 +7647,8 @@ var FloatingPreviewManager = class {
         return;
       }
       this.setFrame(iframe);
-      applyFloatingFrameLayout(this.frame, layout.width, layout.height);
-      this.frameHostEl.appendChild(this.frame);
+      applyFloatingFrameLayout(iframe, layout.width, layout.height);
+      this.frameHostEl.appendChild(iframe);
       this.applyPanelSize();
       return;
     }
@@ -7800,42 +7803,7 @@ var SettingTab = class extends import_obsidian4.PluginSettingTab {
     this.refreshTab();
   }
   refreshTab() {
-    const tab = this;
-    if (typeof tab.update === "function") {
-      tab.update();
-    } else {
-      this.display();
-    }
-  }
-  display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.createEl("button", { text: "New passkey", cls: "mod-cta" }).addEventListener("click", () => {
-      new ModalEditGate(this.app, createEmptyGateOption(), (updatedGate) => {
-        void this.updateGate(updatedGate);
-      }).open();
-    });
-    containerEl.createEl("hr");
-    const settingContainerEl = containerEl.createDiv("setting-container");
-    for (const gate of Object.values(this.plugin.settings.gates)) {
-      const gateEl = settingContainerEl.createDiv({
-        attr: { "data-gate-id": gate.id },
-        cls: "extended-browser-setting-gate"
-      });
-      new import_obsidian4.Setting(gateEl).setName(gate.title).setDesc(gate.url).addButton((button) => {
-        button.setButtonText("Edit").onClick(() => {
-          new ModalEditGate(this.app, gate, (updatedGate) => {
-            void this.updateGate(updatedGate);
-          }).open();
-        });
-      }).addButton((button) => {
-        button.setButtonText("Delete").onClick(() => {
-          void this.plugin.removeGate(gate.id).then(() => {
-            this.refreshTab();
-          });
-        });
-      });
-    }
+    this.update();
   }
   getSettingDefinitions() {
     const gates = Object.values(this.plugin.settings.gates);
@@ -7922,12 +7890,12 @@ var ExtendedBrowserPlugin = class extends import_obsidian4.Plugin {
     return views;
   }
   findTargetGateView() {
-    var _a, _b;
-    const activeView = (_a = this.app.workspace.activeLeaf) == null ? void 0 : _a.view;
-    if (activeView instanceof GateView) {
+    var _a;
+    const activeView = this.app.workspace.getActiveViewOfType(GateView);
+    if (activeView) {
       return activeView;
     }
-    if (((_b = this.lastGateView) == null ? void 0 : _b.leaf) && this.lastGateView.leaf.view === this.lastGateView) {
+    if (((_a = this.lastGateView) == null ? void 0 : _a.leaf) && this.lastGateView.leaf.view === this.lastGateView) {
       return this.lastGateView;
     }
     const openViews = this.collectOpenGateViews();
@@ -8123,7 +8091,7 @@ var ExtendedBrowserPlugin = class extends import_obsidian4.Plugin {
     if (isRecord(partial.gates)) {
       for (const gateId in partial.gates) {
         const gateValue = partial.gates[gateId];
-        if (isRecord(gateValue) && isString(gateValue.url)) {
+        if (isPartialGateOption(gateValue)) {
           try {
             this.settings.gates[gateId] = normalizeGateOption(gateValue);
           } catch (error) {

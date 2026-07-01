@@ -1,4 +1,4 @@
-import { App, Notice, ObsidianProtocolData, Plugin, PluginSettingTab, Setting, SettingDefinitionItem } from 'obsidian'
+import { App, Notice, ObsidianProtocolData, Plugin, PluginSettingTab, Setting } from 'obsidian'
 import { FloatingPreviewManager } from './floating-preview'
 import {
     createEmptyGateOption,
@@ -19,7 +19,7 @@ const DEFAULT_SETTINGS: PluginSetting = {
     gates: {}
 }
 
-class SettingTab extends PluginSettingTab {
+class ExtendedBrowserSettingTab extends PluginSettingTab {
     plugin: ExtendedBrowserPlugin
 
     constructor(app: App, plugin: ExtendedBrowserPlugin) {
@@ -33,49 +33,53 @@ class SettingTab extends PluginSettingTab {
     }
 
     private refreshTab(): void {
-        this.update()
+        this.display()
     }
 
-    getSettingDefinitions(): SettingDefinitionItem[] {
+    display(): void {
+        const { containerEl } = this
+        containerEl.empty()
+
+        const addButton = containerEl.createEl('button', { text: 'New passkey', cls: 'mod-cta' })
+        addButton.addEventListener('click', () => {
+            new ModalEditGate(this.app, createEmptyGateOption(), (updatedGate) => {
+                void this.updateGate(updatedGate)
+            }).open()
+        })
+
+        containerEl.createEl('hr')
+
+        const settingContainerEl = containerEl.createDiv({ cls: 'setting-container' })
         const gates = Object.values(this.plugin.settings.gates)
 
-        return [
-            {
-                type: 'list',
-                heading: 'Passkeys',
-                emptyState: 'No passkeys configured yet.',
-                addItem: {
-                    name: 'New passkey',
-                    action: () => {
-                        new ModalEditGate(this.app, createEmptyGateOption(), (updatedGate) => {
+        if (gates.length === 0) {
+            settingContainerEl.createEl('p', { text: 'No passkeys configured yet.' })
+        }
+
+        for (const gate of gates) {
+            const gateEl = settingContainerEl.createDiv({
+                attr: { 'data-gate-id': gate.id },
+                cls: 'extended-browser-setting-gate'
+            })
+
+            new Setting(gateEl)
+                .setName(gate.title)
+                .setDesc(gate.url)
+                .addButton((button) => {
+                    button.setButtonText('Edit').onClick(() => {
+                        new ModalEditGate(this.app, gate, (updatedGate) => {
                             void this.updateGate(updatedGate)
                         }).open()
-                    }
-                },
-                items: gates.map((gate) => ({
-                    name: gate.title,
-                    desc: gate.url,
-                    render: (setting: Setting) => {
-                        setting.settingEl.setAttribute('data-gate-id', gate.id)
-                        setting.settingEl.addClass('extended-browser-setting-gate')
-                        setting.addButton((button) =>
-                            button.setButtonText('Edit').onClick(() => {
-                                new ModalEditGate(this.app, gate, (updatedGate) => {
-                                    void this.updateGate(updatedGate)
-                                }).open()
-                            })
-                        )
-                        setting.addButton((button) =>
-                            button.setButtonText('Delete').onClick(() => {
-                                void this.plugin.removeGate(gate.id).then(() => {
-                                    this.refreshTab()
-                                })
-                            })
-                        )
-                    }
-                }))
-            }
-        ]
+                    })
+                })
+                .addButton((button) => {
+                    button.setButtonText('Delete').onClick(() => {
+                        void this.plugin.removeGate(gate.id).then(() => {
+                            this.refreshTab()
+                        })
+                    })
+                })
+        }
     }
 }
 
@@ -90,7 +94,7 @@ export default class ExtendedBrowserPlugin extends Plugin {
             (gate) => this.restoreGateToTab(gate),
             (gateId) => this.app.workspace.detachLeavesOfType(gateId)
         )
-        this.addSettingTab(new SettingTab(this.app, this))
+        this.addSettingTab(new ExtendedBrowserSettingTab(this.app, this))
         await this.mayShowFirstPasskey()
         await this.initGates()
         this.registerCommands()

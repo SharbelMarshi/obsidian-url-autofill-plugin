@@ -7793,7 +7793,7 @@ var DEFAULT_SETTINGS = {
   uuid: "",
   gates: {}
 };
-var SettingTab = class extends import_obsidian4.PluginSettingTab {
+var ExtendedBrowserSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -7803,43 +7803,42 @@ var SettingTab = class extends import_obsidian4.PluginSettingTab {
     this.refreshTab();
   }
   refreshTab() {
-    this.update();
+    this.display();
   }
-  getSettingDefinitions() {
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    const addButton = containerEl.createEl("button", { text: "New passkey", cls: "mod-cta" });
+    addButton.addEventListener("click", () => {
+      new ModalEditGate(this.app, createEmptyGateOption(), (updatedGate) => {
+        void this.updateGate(updatedGate);
+      }).open();
+    });
+    containerEl.createEl("hr");
+    const settingContainerEl = containerEl.createDiv({ cls: "setting-container" });
     const gates = Object.values(this.plugin.settings.gates);
-    return [
-      {
-        type: "list",
-        heading: "Passkeys",
-        emptyState: "No passkeys configured yet.",
-        addItem: {
-          name: "New passkey",
-          action: () => {
-            new ModalEditGate(this.app, createEmptyGateOption(), (updatedGate) => {
-              void this.updateGate(updatedGate);
-            }).open();
-          }
-        },
-        items: gates.map((gate) => ({
-          name: gate.title,
-          desc: gate.url,
-          render: (setting) => {
-            setting.settingEl.setAttribute("data-gate-id", gate.id);
-            setting.settingEl.addClass("extended-browser-setting-gate");
-            setting.addButton((button) => button.setButtonText("Edit").onClick(() => {
-              new ModalEditGate(this.app, gate, (updatedGate) => {
-                void this.updateGate(updatedGate);
-              }).open();
-            }));
-            setting.addButton((button) => button.setButtonText("Delete").onClick(() => {
-              void this.plugin.removeGate(gate.id).then(() => {
-                this.refreshTab();
-              });
-            }));
-          }
-        }))
-      }
-    ];
+    if (gates.length === 0) {
+      settingContainerEl.createEl("p", { text: "No passkeys configured yet." });
+    }
+    for (const gate of gates) {
+      const gateEl = settingContainerEl.createDiv({
+        attr: { "data-gate-id": gate.id },
+        cls: "extended-browser-setting-gate"
+      });
+      new import_obsidian4.Setting(gateEl).setName(gate.title).setDesc(gate.url).addButton((button) => {
+        button.setButtonText("Edit").onClick(() => {
+          new ModalEditGate(this.app, gate, (updatedGate) => {
+            void this.updateGate(updatedGate);
+          }).open();
+        });
+      }).addButton((button) => {
+        button.setButtonText("Delete").onClick(() => {
+          void this.plugin.removeGate(gate.id).then(() => {
+            this.refreshTab();
+          });
+        });
+      });
+    }
   }
 };
 var ExtendedBrowserPlugin = class extends import_obsidian4.Plugin {
@@ -7850,7 +7849,7 @@ var ExtendedBrowserPlugin = class extends import_obsidian4.Plugin {
   async onload() {
     await this.loadSettings();
     this.floatingPreview = new FloatingPreviewManager((gate) => this.restoreGateToTab(gate), (gateId) => this.app.workspace.detachLeavesOfType(gateId));
-    this.addSettingTab(new SettingTab(this.app, this));
+    this.addSettingTab(new ExtendedBrowserSettingTab(this.app, this));
     await this.mayShowFirstPasskey();
     await this.initGates();
     this.registerCommands();

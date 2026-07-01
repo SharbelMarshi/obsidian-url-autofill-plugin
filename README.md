@@ -1,11 +1,12 @@
 # Extended Browser
 
-Extended Browser embeds websites in the app and can fill configured URL login fields from local passkey profiles when you open them.
+Extended Browser embeds websites in Obsidian and can fill configured URL login fields from local passkey profiles when you open them.
 
 ## Features
 
 - Save passkey profiles with a URL, display name, and optional sign-in credentials
-- Open saved sites in a tab, sidebar pane, or separate window
+- Open saved sites in a tab, a separate window, or a floating window
+- Open saved websites in a floating window so you can keep a web page visible while working in notes. To use it, open the Command Palette with Cmd+P and run Toggle floating preview. The floating preview can be resized and includes a back button for navigation.
 - Optional automatic sign-in using configured username and password field names
 - Insert gate links in notes and open sites from the command palette or ribbon
 

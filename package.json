@@ -1,7 +1,7 @@
 {
   "name": "extended-browser",
-  "version": "0.1.8",
-  "description": "Fill configured URL login fields from local passkey profiles.",
+  "version": "0.1.9",
+  "description": "Embed saved websites inside Obsidian and open them in a tab, sidebar, or floating window. Supports configured URL/login fields, optional automatic sign-in, and quick opening from notes, the ribbon, or commands.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
